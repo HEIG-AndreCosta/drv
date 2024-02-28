@@ -1,5 +1,7 @@
-#include <stdio.h>
+#ifndef SECOND_H
+#define SECOND_H
 
+#include <stdio.h>
 #include "first.h"
 
 #define SECOND_NAME "second"
@@ -10,3 +12,5 @@ void second()
 {
 	printf("I am %s (id = %d) and I introduce no-one :(\n", SECOND_NAME, id2);
 }
+
+#endif

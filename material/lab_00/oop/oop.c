@@ -74,18 +74,22 @@ struct RectangleFuncTable {
 			.setWidth = Rectangle_setWidth
 };
 
-struct Shape* Rectangle_init(int initx, int inity,
-			     int initw, int inith)
+void  __Rectangle_init(struct Rectangle* obj, int initx, int inity, int initw, int inith)
 {
-	struct Rectangle *obj =
-		(struct Rectangle *) malloc(sizeof(struct Rectangle));
 	obj->super.funcTable =
 		(struct ShapeFuncTable *) &rectangleFuncTable;
 	obj->x = initx;
 	obj->y = inity;
 	obj->width = initw;
 	obj->height = inith;
-	return (struct Shape *) obj;
+}
+struct Shape* Rectangle_init(int initx, int inity,
+			     int initw, int inith)
+{
+	struct Rectangle *obj =
+		(struct Rectangle *) malloc(sizeof(struct Rectangle));
+	__Rectangle_init(obj, initx, inity, initw, inith);
+    return (struct Shape *) obj;
 }
 
 /* Circle class */
@@ -137,6 +141,40 @@ struct Shape *Circle_init(int initx, int inity, int initr)
 	obj->y = inity;
 	obj->radius = initr;
 	return (struct Shape *) obj;
+}
+
+struct ParallelipedeRectangle {
+   struct Rectangle super;
+   int z;
+};
+
+double ParallelipedeRectangle_calculateVolume (struct Shape* obj)
+{
+    struct ParallelipedeRectangle* pr = (struct ParallelipedeRectangle*) obj;
+
+    return pr->super.x * pr->super.y * pr->z;
+}
+
+struct ParallelipedeRectangleFuncTable {
+	struct RectangleFuncTable super;
+	double (*calculateVolume) (struct Shape *obj);
+} parallelipedeRectangleFunctTable = {
+    {{
+    		 .printArea = Rectangle_printArea,
+			 .moveTo = Rectangle_moveTo,
+			 .destructor_ = Rectangle_destroy
+			},
+			.setWidth = Rectangle_setWidth
+    },    
+    .calculateVolume = ParallelipedeRectangle_calculateVolume
+    };
+struct Shape* ParallelipedeRectangle_init(int initx, int inity, int initz, int inith, int initw)
+{
+    struct ParallelipedeRectangle* obj = malloc(sizeof(struct ParallelipedeRectangle));
+    __Rectangle_init(&(obj->super),initx,  inity,  initw, inith);
+    obj->z = initz;
+    obj->super.super.funcTable = (struct ShapeFuncTable*) &parallelipedeRectangleFunctTable; //parallelipedeRectangleFunctTable;
+    return (struct Shape*) obj;
 }
 
 #define Shape_PRINTAREA(obj) (((struct Shape *) (obj))->funcTable->printArea((obj)))
