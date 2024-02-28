@@ -17,6 +17,7 @@
     <script src="../_static/translations.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Recherche" href="../search.html" />
+    <link rel="next" title="Laboratoire 1 — Introduction" href="../lab_01/lab_01.html" />
     <link rel="prev" title="Helper" href="../helper/helper.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
@@ -79,9 +80,8 @@ de tout cela (plus d’info <a class="reference external" href="https://en.wikip
 mais il n’est pas utilisé dans le kernel (il y a en effet quelques problèmes
 dans son utilisation — c’est assez compliqué de déterminer de manière portable
 si deux fichiers sont « physiquement » le même fichier ou pas).</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 1</strong></p>
+<div class="admonition-exercice-1 admonition">
+<p class="admonition-title"><strong>Exercice 1</strong></p>
 <p>Essayez de compiler le logiciel dans le répertoire
 <code class="file docutils literal notranslate"><span class="pre">multiple_files</span></code> (qui est dans l’archive du labo) avec la commande
 <code class="code bash docutils literal notranslate"><span class="pre">gcc</span> <span class="pre">main.c</span> <span class="pre">-o</span> <span class="pre">main</span> <span class="pre">-Wall</span></code>
@@ -111,9 +111,8 @@ taille — ou, encore pire, on pense la connaître, mais pour ce compilateur /
 architecture elle est différente…</p>
 <p>Pour nous aider dans cette situation, on peut utiliser la fonction <code class="code c docutils literal notranslate"><span class="keyword"><span class="pre">sizeof</span></span><span class="punctuation"><span class="pre">()</span></span></code>
 qui nous fournit, pour un type ou une variable donnée, sa taille en bytes.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 2</strong></p>
+<div class="admonition-exercice-2 admonition">
+<p class="admonition-title"><strong>Exercice 2</strong></p>
 <p>Compilez le logiciel dans le répertoire
 <code class="file docutils literal notranslate"><span class="pre">sizeof</span></code> avec la commande
 <code class="code bash docutils literal notranslate"><span class="pre">gcc</span> <span class="pre">sizeof_test.c</span> <span class="pre">-o</span> <span class="pre">sizeof_test</span> <span class="pre">-Wall</span></code> (un warning devrait apparaître) et exécuter le.</p>
@@ -178,9 +177,8 @@ avertissements en faisant des cast, p. ex. :</p>
 </pre></div>
 </div>
 <p>Il faut, par contre, être sûr de ce qu’on fait…</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 3</strong></p>
+<div class="admonition-exercice-3 admonition">
+<p class="admonition-title"><strong>Exercice 3</strong></p>
 <p>Écrivez un petit logiciel qui affecte 0xBEEFCAFE à une variable entière,
 et ensuite allez relire cette valeur en la regardant un byte à la fois
 dans une boucle for (bien sûr, oubliez l’utilisation des <code class="code c docutils literal notranslate"><span class="punctuation"><span class="pre">[]</span></span></code> !! —
@@ -222,9 +220,8 @@ vers fonction.
 Parmi les paramètres de ces fonctions, il faut qu’un des paramètres soit un
 pointeur vers une structure — afin qu’il soit possible accéder aux champs de la
 structure.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 4</strong></p>
+<div class="admonition-exercice-4 admonition">
+<p class="admonition-title"><strong>Exercice 4</strong></p>
 <p>Vous trouverez dans l’archive du labo un exemple de programmation OOP
 fait en langage C.
 Ajoutez à cet exemple le parallélépipède rectangle, avec une fonction pour en
@@ -268,9 +265,8 @@ un autre avec juste les noms, …</p>
 <p>Combien de mémoire est utilisée dans les deux cas (en supposant
 qu’un entier prend 4 bytes et un caractère 1 byte) ?</p>
 </div>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 5</strong></p>
+<div class="admonition-exercice-5 admonition">
+<p class="admonition-title"><strong>Exercice 5</strong></p>
 <p>Écrivez un petit logiciel pour stocker un entier et un caractère de vos
 choix dans les deux cas ci-dessus, et qui les affiche ensuite à
 l’écran.</p>
@@ -385,9 +381,8 @@ Pour cela, on peut utiliser (avec GCC) l’attribut <code class="code c docutils
 <p>Pour davantage d’info, regardez le manuel de GCC (
 <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc-4.0.2/gcc/Type-Attributes.html">ici</a> et
 <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Function-Attributes.html">ici</a>).</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 6</strong></p>
+<div class="admonition-exercice-6 admonition">
+<p class="admonition-title"><strong>Exercice 6</strong></p>
 <p>Regardez dans les entêtes du noyau Linux (ce ne serait pas mal de
 pré-filtrer la recherche avec <code class="code bash docutils literal notranslate"><span class="pre">git-grep</span></code> en utilisant la bonne
 option… à vous de trouver laquelle… ;)) quels attributs sont
@@ -404,9 +399,8 @@ dans une struct.</p>
 par récupérer le pointeur vers une structure en n’ayant que d’un pointeur sur un champ
 de la structure. Vous avez un exemple d’utilisation
 <a class="reference external" href="http://www.kroah.com/log/linux/container_of.html">ici</a>.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 7</strong></p>
+<div class="admonition-exercice-7 admonition">
+<p class="admonition-title"><strong>Exercice 7</strong></p>
 <p>Définissez la macro <code class="code c docutils literal notranslate"><span class="name"><span class="pre">container_of</span></span></code> (ci-dessous) et une structure
 contenant trois variables de type différent.</p>
 <div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="cp">#define container_of(ptr, type, member) \</span>
@@ -468,9 +462,8 @@ Quelle est l’utilité des <code class="code c docutils literal notranslate"><s
 <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html#Type%2Dpunning">type punning</a>.
 Elle est possible à partir de la version C99 du langage (avant, c’était undefined
 behavior — voir plus bas), et elle est souvent utilisée dans le noyau.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 8</strong></p>
+<div class="admonition-exercice-8 admonition">
+<p class="admonition-title"><strong>Exercice 8</strong></p>
 <p>Tout comme l’exercice 3, écrivez un programme qui affecte la valeur 0xBEEFCAFE à une variable et
 ensuite, relisez la valeur byte par byte. Utiliser une union pour cela.</p>
 </div>
@@ -530,9 +523,8 @@ avoir changé la valeur de la variable, et ce changement ne sera pas pris en
 compte à cause du compilateur !</p>
 <p>Pour éviter cela, le keyword <code class="code c docutils literal notranslate"><span class="keyword"><span class="pre">volatile</span></span></code> a été introduit en C. Il signifie <em>« ne fais
 pas d’hypothèse stp, il faut qu’à chaque fois, tu relises la valeur de cette variable »</em>.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 9</strong></p>
+<div class="admonition-exercice-9 admonition">
+<p class="admonition-title"><strong>Exercice 9</strong></p>
 <p>Écrivez une fonction dans <a class="reference external" href="https://godbolt.org/">GodBolt</a> pour voir par vous-mêmes
 ce que cela veut dire en termes de code assembleur — c.-à-d.,
 écrivez une fonction qui fait le test susmentionné avec et sans le keyword
@@ -576,9 +568,8 @@ Vous avez plus de détails sur les options possibles
 Bien sûr, ces tests sont au run-time et non pas à compile-time (pourquoi ???).</p>
 <p>Le Undefined Behavior Sanitizer est utilisé aussi
 <a class="reference external" href="https://www.kernel.org/doc/html/latest/dev-tools/ubsan.html">dans le noyau</a>.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>Exercice 10</strong></p>
+<div class="admonition-exercice-10 admonition">
+<p class="admonition-title"><strong>Exercice 10</strong></p>
 <p>Écrivez un petit logiciel qui déclare une variable entière sur 32 bits,
 ensuite affectez-lui une valeur.
 Effectuez un shift vers la gauche d’un nombre fixe de bits &gt; 32, par
@@ -654,6 +645,8 @@ Si un exercice contient plusieurs variantes, alors le fichier sera nommé <em>ex
 Par exemple : <em>ex2.c</em>, <em>ex6_poll.c</em>.
 Il n’est pas nécessaire de renommer les fichiers déjà existants.
 Si un exercice réutilise un fichier précédent, celui-ci doit être dupliqué pour le nouvel exercice.</p>
+<p>Si le code a pour but d’être exécuté sur la DE1-SoC, il doit être compilé en « compilation croisée »,
+c.-à-d. en utilisant la toolchain mentionnée dans le <a class="reference internal" href="../lab_01/lab_01.html#laboratoire1"><span class="std std-ref">Laboratoire 1 — Introduction</span></a>.</p>
 <p>N’oubliez pas de mettre votre prénom et nom !</p>
 <p>Les exercices sont à faire <strong>individuellement</strong>.
 Regarder la solution du voisin n’est pas toléré.
@@ -667,7 +660,7 @@ Vous devez rendre une archive <code class="file docutils literal notranslate"><s
 <div><ul class="simple">
 <li><p>expliquant comment compiler votre code (ligne de commande, …)</p></li>
 <li><p>donnant une petit procédure pour tester son fonctionnement</p></li>
-<li><p>contenant les réponses aux questions posées dans les exercices.</p></li>
+<li><p>contenant les réponses aux questions posées dans les exercices (les questions dans les notes ne sont pas obligatoires).</p></li>
 <li><p><strong>pas d’explication</strong> → <strong>pas de correction!</strong></p></li>
 </ul>
 </div></blockquote>
@@ -740,6 +733,8 @@ particulièrement les points suivants :</p>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../helper/helper.html">Helper</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Laboratoire 0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_01/lab_01.html">Laboratoire 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tuto_01/tuto_01.html">Tuto 1</a></li>
 </ul>
 
 <div class="relations">
@@ -747,6 +742,7 @@ particulièrement les points suivants :</p>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
       <li>Previous: <a href="../helper/helper.html" title="Chapitre précédent">Helper</a></li>
+      <li>Next: <a href="../lab_01/lab_01.html" title="Chapitre suivant">Laboratoire 1 — Introduction</a></li>
   </ul></li>
 </ul>
 </div>

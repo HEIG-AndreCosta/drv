@@ -228,8 +228,8 @@ div.body p, div.body dd, div.body li {
 div.admonition {
     margin: 20px 0px;
     padding: 10px 30px;
-    background-color: #EEE;
-    border: 1px solid #CCC;
+    background-color: #c2e3ed;
+    border: 1px solid #8fd6ff;
 }
 
 div.admonition tt.xref, div.admonition code.xref, div.admonition a tt {
