@@ -89,23 +89,23 @@ void clear_leds(uint16_t *led_register)
 int main()
 {
 	//Open /dev/mem
-	int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+	int mem_fd = open("/dev/uio0", O_RDWR);
 	if (mem_fd < 0) {
-		printf("Can't open /dev/mem\n");
+		printf("Can't open /dev/uio0\n");
 		return -1;
 	}
 
 	// Get a pointer to the page
 	uint8_t *mem_page = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
-				 MAP_SHARED, mem_fd, LED_REGISTER_BASE);
-
-	//Close /dev/mem since we no longer need it
-	close(mem_fd);
+				 MAP_SHARED, mem_fd, 0);
 
 	if (mem_page == MAP_FAILED) {
 		printf("Mapping failed\n");
 		return -1;
 	}
+	//Close /dev/mem since we no longer need it
+	close(mem_fd);
+
 	// Get pointers to each necessary register
 	uint16_t *const led_register = (uint16_t *)mem_page;
 	uint8_t *const seven_seg_reg = mem_page + SEVEN_SEG_OFFSET;
