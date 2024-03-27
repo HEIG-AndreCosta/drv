@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/select.h>
 #include <signal.h>
 
 #define SEVEN_SEG_OFFSET		  0x20
@@ -148,7 +149,6 @@ void display_prompt(question_prompt_t *question)
 		printf("\t%d. %s\n", i, question->possibilities[i].response);
 	}
 }
-
 volatile bool running = true;
 void sigint_handler(int signal)
 {
@@ -188,12 +188,17 @@ int main()
 	clear_leds(led_register);
 	clear_7_seg(seven_seg_reg);
 
+	write_to_7_seg(seven_seg_reg, MIN_VALUE);
+
 	int8_t score = MIN_VALUE;
 	//enable the pb interrupts on the card
 	enable_pb_interrupts(pb_interrupt_mask_reg, pb_interrupt_edge_reg);
 	question_prompt_t *current_question = NULL;
 
-	write_to_7_seg(seven_seg_reg, MIN_VALUE);
+	fd_set fds;
+	FD_ZERO(&fds);
+	FD_SET(fd, &fds);
+	signal(SIGINT, sigint_handler);
 	while (running) {
 		if (!current_question) {
 			printf("Appuyez sur le bouton 0 pour afficher une question\n");
@@ -203,19 +208,28 @@ int main()
 		uint32_t info = 1;
 		// Unmask the interrupts
 		ssize_t nb_read = write(fd, &info, sizeof(info));
+
 		if (nb_read != (ssize_t)sizeof(info)) {
 			printf("Error writing to /dev/uio0\n");
 			return -1;
 		}
 
-		// Wait for an interrupt
-		nb_read = read(fd, &info, sizeof(info));
-		if (nb_read == (ssize_t)sizeof(info)) {
-			//Get the button that was pressed
-			btn_pressed = get_btn_pressed(pb_interrupt_edge_reg);
+		int ret = select(fd + 1, &fds, NULL, NULL, NULL);
 
-			//Rearm the interrupts
-			rearm_pb_interrupts(pb_interrupt_edge_reg);
+		if (ret < 0) {
+			printf("Error Selecting\n");
+			break;
+		} else {
+			// Wait for an interrupt
+			nb_read = read(fd, &info, sizeof(info));
+			if (nb_read == (ssize_t)sizeof(info)) {
+				//Get the button that was pressed
+				btn_pressed =
+					get_btn_pressed(pb_interrupt_edge_reg);
+
+				//Rearm the interrupts
+				rearm_pb_interrupts(pb_interrupt_edge_reg);
+			}
 		}
 
 		int8_t response = -1;

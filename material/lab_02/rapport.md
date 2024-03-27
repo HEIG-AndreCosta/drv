@@ -246,3 +246,87 @@ arm-linux-gnueabihf-gcc ex1.c -Wall -Wextra -o ~/export/drv/ex1
 				 MAP_SHARED, mem_fd, 0); // Offset is 0 in case of uio0
 
 ```
+
+## Exercice 4 - 5
+
+Pour les trois versions, on doit à chaque fois unmasker les interruptions sur UIO:
+
+```c
+uint32_t info = 1;
+// Unmask the interrupts
+ssize_t nb_read = write(fd, &info, sizeof(info));
+if (nb_read != (ssize_t)sizeof(info)) {
+	printf("Error writing to /dev/uio0\n");
+	return -1;
+}
+```
+
+Vu que nous allons bloquer le code jusqu'à ce qu'une interruption se produise, on peut unmasker les interruptions en début de boucle ce qui nous permettra de ne pas rater d'interruptions.
+
+- Pour la première version, on peut juste faire un appel `read()` sur le fichier `/dev/uio0` qui bloquera jusqu'à la prochaine interruption.
+
+```c
+// Wait for an interrupt
+nb_read = read(fd, &info, sizeof(info));
+if (nb_read == (ssize_t)sizeof(info)) {
+	//Get the button that was pressed
+	btn_pressed = get_btn_pressed(pb_interrupt_edge_reg);
+
+	//Rearm the interrupts
+	rearm_pb_interrupts(pb_interrupt_edge_reg);
+}
+```
+
+- La deuxième version appelle la fonction `poll()` qui va bloquer jusqu'à ce qu'une interruption se produise.
+
+```c
+int ret = poll(&fds, 1, -1);
+if (ret < 0) {
+	printf("Error polling\n");
+	break;
+} else {
+	// Wait for an interrupt
+	nb_read = read(fd, &info, sizeof(info));
+	if (nb_read == (ssize_t)sizeof(info)) {
+		//Get the button that was pressed
+		btn_pressed =
+			get_btn_pressed(pb_interrupt_edge_reg);
+
+		//Rearm the interrupts
+		rearm_pb_interrupts(pb_interrupt_edge_reg);
+	}
+}
+```
+
+- La troisième version utilise la fonction `select()` qui va bloquer jusqu'à ce qu'une interruption se produise.
+
+```c
+
+int ret = select(fd + 1, &fds, NULL, NULL, NULL);
+
+if (ret < 0) {
+	printf("Error Selecting\n");
+	break;
+} else {
+	// Wait for an interrupt
+	nb_read = read(fd, &info, sizeof(info));
+	if (nb_read == (ssize_t)sizeof(info)) {
+		//Get the button that was pressed
+		btn_pressed =
+			get_btn_pressed(pb_interrupt_edge_reg);
+
+		//Rearm the interrupts
+		rearm_pb_interrupts(pb_interrupt_edge_reg);
+	}
+}
+```
+
+Il n'y a pas de différence de fonctionnement dans les trois versions. Cependant, les versions avec `poll()` et `select()` permettraient de gérer plusieurs fichiers descripteurs en même temps ainsi que des timeouts si l'on veut pas bloquer indéfiniment.
+
+### Compilation
+
+```shell
+arm-linux-gnueabihf-gcc ex4.c -o ~/export/drv/ex4 -Wall -Wextra
+arm-linux-gnueabihf-gcc ex4_poll.c -o ~/export/drv/ex4_poll -Wall -Wextra
+arm-linux-gnueabihf-gcc ex4_select.c -o ~/export/drv/ex4_select -Wall -Wextra
+```
