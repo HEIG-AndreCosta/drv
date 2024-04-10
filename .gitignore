@@ -1,1 +1,9 @@
 .tar
+*.cmd
+*.o
+*.ko
+*.mod.cmd
+*.order
+*.symvers
+*.mod
+*.mod.c
