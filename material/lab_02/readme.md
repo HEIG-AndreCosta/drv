@@ -1,4 +1,4 @@
-# Laboratoire 2
+# Laboratoire 2 - DRV
 
 ### André Costa
 
@@ -205,9 +205,16 @@ int main()
 }
 ```
 
+### Compilation
+
 ```shell
 arm-linux-gnueabihf-gcc ex1.c -Wall -Wextra -o ~/export/drv/ex1
 ```
+
+### Tester
+
+- Lancer dans la DE1-SOC
+- Presser sur les touches 0 et 1 pour incrémenter et décrémenter la valeur affichée sur les 7 segments.
 
 ## Exercice 2
 
@@ -246,6 +253,17 @@ arm-linux-gnueabihf-gcc ex1.c -Wall -Wextra -o ~/export/drv/ex1
 				 MAP_SHARED, mem_fd, 0); // Offset is 0 in case of uio0
 
 ```
+
+### Compilation
+
+```shell
+arm-linux-gnueabihf-gcc ex3.c -o ~/export/drv/ex3 -Wall -Wextra
+```
+
+### Tester
+
+- Lancer dans la DE1-SOC
+- Presser sur les touches 0 et 1 pour incrémenter et décrémenter la valeur affichée sur les 7 segments.
 
 ## Exercice 4 - 5
 
@@ -330,3 +348,10 @@ arm-linux-gnueabihf-gcc ex4.c -o ~/export/drv/ex4 -Wall -Wextra
 arm-linux-gnueabihf-gcc ex4_poll.c -o ~/export/drv/ex4_poll -Wall -Wextra
 arm-linux-gnueabihf-gcc ex4_select.c -o ~/export/drv/ex4_select -Wall -Wextra
 ```
+
+### Tester
+
+- Lancer dans la DE1-SOC
+- Repeter en boucle:
+  - Presser sur la touche 0 pour afficher la première question
+  - Répondre à la question en pressant les touches 0 - 4
