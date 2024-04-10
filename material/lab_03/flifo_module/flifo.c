@@ -1,11 +1,11 @@
-#include <linux/module.h> /* Needed by all modules */
-#include <linux/kernel.h> /* Needed for KERN_INFO */
-#include <linux/init.h> /* Needed for the macros */
 #include <linux/fs.h> /* Needed for file_operations */
+#include <linux/init.h> /* Needed for the macros */
+#include <linux/kernel.h> /* Needed for KERN_INFO */
+#include <linux/miscdevice.h> /* Needed for misc_register */
+#include <linux/module.h> /* Needed by all modules */
 #include <linux/slab.h> /* Needed for kmalloc */
-#include <linux/uaccess.h> /* copy_(to|from)_user */
-
 #include <linux/string.h>
+#include <linux/uaccess.h> /* copy_(to|from)_user */
 
 #include "flifo.h"
 
@@ -13,7 +13,7 @@
 
 #define NB_VALUES   16
 
-static int values[NB_VALUES];
+static int64_t values[NB_VALUES];
 static size_t next_in;
 static size_t nb_values;
 static int mode;
@@ -31,9 +31,12 @@ static int mode;
 static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 			  loff_t *ppos)
 {
-	char buffer[256];
-	int nb_char;
-	int value;
+	typedef union {
+		char buffer[8];
+		int64_t val64;
+	} value_t;
+
+	value_t value;
 
 	if (buf == NULL || nb_values == 0) {
 		return 0;
@@ -42,26 +45,26 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 	// Read the value from the list using correct mode.
 	switch (mode) {
 	case MODE_FIFO:
-		value = values[(NB_VALUES + next_in - nb_values) % NB_VALUES];
+		value.val64 =
+			values[(NB_VALUES + next_in - nb_values) % NB_VALUES];
 		break;
 	case MODE_LIFO:
-		value = values[next_in - 1];
+		value.val64 = values[next_in - 1];
 		break;
 	default:
 		return 0;
 	}
 
-	// Convert the integer to a string
-	nb_char = snprintf(buffer, sizeof(buffer), "%d", value);
+	pr_info("Read value: %lld\n", value.val64);
 
 	// This a simple usage of ppos to avoid infinit loop with `cat`
 	// it may not be the correct way to do.
 	if (*ppos != 0) {
 		return 0;
 	}
-	*ppos = nb_char;
+	*ppos = 0;
 
-	if (copy_to_user(buf, buffer, nb_char) != 0) {
+	if (copy_to_user(buf, &value.val64, sizeof(value.val64)) != 0) {
 		return 0;
 	}
 
@@ -69,8 +72,8 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 		next_in--;
 	}
 	nb_values--;
-
-	return nb_char;
+	pr_info("Read Ok\n");
+	return sizeof(value.val64);
 }
 
 /**
@@ -86,41 +89,59 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 static ssize_t flifo_write(struct file *filp, const char __user *buf,
 			   size_t count, loff_t *ppos)
 {
-	char *buffer;
-	uint32_t value;
+	typedef union {
+		char buffer[8];
+		int8_t val8;
+		int16_t val16;
+		int32_t val32;
+		int64_t val64;
+	} value_t;
 
-	if (count == 0 || nb_values == NB_VALUES) {
+	value_t value;
+	if (count == 0 || count > 8 || nb_values == NB_VALUES) {
 		return 0;
 	}
 
 	*ppos = 0;
 
-	buffer = kmalloc(count + 1, GFP_KERNEL);
+	// value.buffer = kmalloc(8, GFP_KERNEL);
 
 	// Get the value and convert it to an integer.
-	if (copy_from_user(buffer, buf, count) != 0) {
-		count = 0;
-		goto end;
+	if (copy_from_user(value.buffer, buf, count) != 0) {
+		return 0;
 	}
 
-	sscanf(buffer, "%d", &value);
-
 	// Add the value in the list.
-	values[next_in] = value;
+	switch (count) {
+	case 1:
+		value.val64 = value.val8;
+		break;
+	case 2:
+		value.val64 = value.val16;
+		break;
+	case 4:
+		value.val64 = value.val32;
+		break;
+	case 8:
+		break;
+	default:
+		return 0;
+	}
+	pr_info("Write value: %lld\n", value.val64);
+	values[next_in] = value.val64;
 	next_in = (next_in + 1) % NB_VALUES;
 	nb_values++;
 
-end:
-	kfree(buffer);
-
+	pr_info("Write Ok\n");
 	return count;
 }
 
 /**
- * @brief Device file ioctl callback. This permits to modify the behavior of the module.
+ * @brief Device file ioctl callback. This permits to modify the behavior of the
+ * module.
  *        - If the command is FLIFO_CMD_RESET, then the list is reset.
- *        - If the command is FLIFO_CMD_CHANGE_MODE, then the arguments will determine
- *          the list's mode between FIFO (MODE_FIFO) and LIFO (MODE_LIFO)
+ *        - If the command is FLIFO_CMD_CHANGE_MODE, then the arguments will
+ * determine the list's mode between FIFO (MODE_FIFO) and LIFO (MODE_LIFO)
  *
  * @param filp File structure of the char device to which ioctl is performed.
  * @param cmd  Command value of the ioctl
@@ -168,6 +189,10 @@ static int __init flifo_init(void)
 
 	//	register_chrdev(MAJOR_NUM, DEVICE_NAME, &flifo_fops);
 	int ret = misc_register(&flifo_miscdev);
+	if (ret) {
+		pr_err("misc_register failed\n");
+		return ret;
+	}
 	pr_info("FLIFO ready!\n");
 	pr_info("ioctl FLIFO_CMD_RESET: %u\n", FLIFO_CMD_RESET);
 	pr_info("ioctl FLIFO_CMD_CHANGE_MODE: %lu\n", FLIFO_CMD_CHANGE_MODE);
@@ -177,7 +202,7 @@ static int __init flifo_init(void)
 
 static void __exit flifo_exit(void)
 {
-	//unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
+	// unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 	misc_deregister(&flifo_miscdev);
 	pr_info("FLIFO done!\n");
 }

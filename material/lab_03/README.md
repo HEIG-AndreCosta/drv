@@ -154,13 +154,13 @@ $ dmesg | tail -n 2
 
 # Exercice 5
 
-- Lance le driver `flifo` avec `insmod`
+- Lancer le driver `flifo` avec `insmod`
 
 ```shell
 $ sudo insmod flifo.ko
 ```
 
-- Crée un device avec `mknod` avec le major 97 pour que le driver `flifo` s'en occupe.
+- Crée un device avec `mknod` avec le major `97` pour que le driver `flifo` s'en occupe.
 
 ```shell
 $ sudo mknod -m 0666 /dev/mynode c 97 0
@@ -181,8 +181,11 @@ $ cat /dev/mynode
 
 - Changement de Mode
 
+- Le 1074014977 a été trouvé dans `dmesg` et indique CHANGE_MODE,
+- Le 1 dans flifo.h et est utilisé pour changer en mode LIFO
+
 ```shell
-$ ./ioctl /dev/mynode 1074014977 1 # Le 1074014977 a été trouvé dans dmesg - CHANGE_MODE, le 1 dans flifo.h Change en mode LIFO
+$ ./ioctl /dev/mynode 1074014977 1
 $ echo "1" >> /dev/mynode
 $ echo "2" >> /dev/mynode
 $ cat /dev/mynode
@@ -238,4 +241,17 @@ static void __exit flifo_exit(void)
 	misc_deregister(&flifo_miscdev);
 	pr_info("FLIFO done!\n");
 }
+```
+
+- Une fois ces changements effectués, lors de l'insertion du module, on peut voir le fichier `/dev/flifo` créé automatiquement.
+
+```shell
+ls -la /dev/flifo
+crw------- 1 root root 10, 119 avr 10 22:01 /dev/flifo
+```
+
+Pour éviter de devoir faire un sudo à chaque fois que je veux écrire dans le fichier, je peux changer les permissions du fichier.
+
+```shell
+sudo chmod 666 /dev/flifo
 ```

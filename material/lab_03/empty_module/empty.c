@@ -1,5 +1,5 @@
-#include <linux/module.h> /* Needed by all modules */
 #include <linux/kernel.h> /* Needed for KERN_* */
+#include <linux/module.h> /* Needed by all modules */
 
 static int __init empty_init(void)
 {
