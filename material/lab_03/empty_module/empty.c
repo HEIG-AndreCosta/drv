@@ -9,7 +9,7 @@ static int __init empty_init(void)
 
 static void __exit empty_exit(void)
 {
-	pr_debug("Good bye!\n");
+	pr_info("Good bye!\n");
 }
 
 MODULE_AUTHOR("REDS");
