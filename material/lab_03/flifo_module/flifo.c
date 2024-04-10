@@ -9,10 +9,9 @@
 
 #include "flifo.h"
 
-#define MAJOR_NUM	      97
-#define DEVICE_NAME	      "flifo"
+#define DEVICE_NAME "flifo"
 
-#define NB_VALUES	      16
+#define NB_VALUES   16
 
 static int values[NB_VALUES];
 static size_t next_in;
@@ -36,7 +35,7 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 	int nb_char;
 	int value;
 
-	if (buf == NULL) {
+	if (buf == NULL || nb_values == 0) {
 		return 0;
 	}
 
@@ -62,7 +61,9 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 	}
 	*ppos = nb_char;
 
-	copy_to_user(buf, buffer, nb_char);
+	if (copy_to_user(buf, buffer, nb_char) != 0) {
+		return 0;
+	}
 
 	if (mode == MODE_LIFO) {
 		next_in--;
@@ -88,7 +89,7 @@ static ssize_t flifo_write(struct file *filp, const char __user *buf,
 	char *buffer;
 	uint32_t value;
 
-	if (count == 0) {
+	if (count == 0 || nb_values == NB_VALUES) {
 		return 0;
 	}
 
@@ -97,7 +98,11 @@ static ssize_t flifo_write(struct file *filp, const char __user *buf,
 	buffer = kmalloc(count + 1, GFP_KERNEL);
 
 	// Get the value and convert it to an integer.
-	copy_from_user(buffer, buf, count);
+	if (copy_from_user(buffer, buf, count) != 0) {
+		count = 0;
+		goto end;
+	}
+
 	sscanf(buffer, "%d", &value);
 
 	// Add the value in the list.
@@ -105,6 +110,7 @@ static ssize_t flifo_write(struct file *filp, const char __user *buf,
 	next_in = (next_in + 1) % NB_VALUES;
 	nb_values++;
 
+end:
 	kfree(buffer);
 
 	return count;
@@ -149,15 +155,19 @@ const static struct file_operations flifo_fops = {
 	.write = flifo_write,
 	.unlocked_ioctl = flifo_ioctl,
 };
-
+static struct miscdevice flifo_miscdev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = DEVICE_NAME,
+	.fops = &flifo_fops,
+};
 static int __init flifo_init(void)
 {
 	next_in = 0;
 	nb_values = 0;
 	mode = MODE_FIFO;
 
-	register_chrdev(MAJOR_NUM, DEVICE_NAME, &flifo_fops);
-
+	//	register_chrdev(MAJOR_NUM, DEVICE_NAME, &flifo_fops);
+	int ret = misc_register(&flifo_miscdev);
 	pr_info("FLIFO ready!\n");
 	pr_info("ioctl FLIFO_CMD_RESET: %u\n", FLIFO_CMD_RESET);
 	pr_info("ioctl FLIFO_CMD_CHANGE_MODE: %lu\n", FLIFO_CMD_CHANGE_MODE);
@@ -167,12 +177,12 @@ static int __init flifo_init(void)
 
 static void __exit flifo_exit(void)
 {
-	unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
-
+	//unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
+	misc_deregister(&flifo_miscdev);
 	pr_info("FLIFO done!\n");
 }
 
-MODULE_AUTHOR("REDS");
+MODULE_AUTHOR("André Costa");
 MODULE_LICENSE("GPL");
 
 module_init(flifo_init);
