@@ -518,8 +518,16 @@ insmod flifo.ko
 
 Pour cross-compiler le module, il suffit de lancer la commande `make` dans le dossier `flifo_module` en spécifiant la variable `CROSS_COMPILE` avec le préfixe de l'outil de cross-compilation.
 
+Si la toolchain se trouve dans `/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/`, pas besoin de la spécifier, il suffit de lancer la commande suivante:
+
 ```shell
-make CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm
+make -f Makefile-De1 KERNELDIR=/path/to/linux-socfpga ARCH=arm
+```
+
+Ensuite sur la cible, il suffit de lancer la commande `insmod` pour insérer le module.
+
+```shell
+insmod flifo.ko
 ```
 
 ## Tests
@@ -531,7 +539,10 @@ Il est disponible [ici](./flifo_test.c)
 Pour le compiler:
 
 ```shell
+# Natif
 gcc flifo_test.c -Wall -Wextra -o flifotest
+# Cross-compilation
+arm-linux-gnueabihf-gcc flifo_test.c -Wall -Wextra -o /path/to/export/folder/flifotest
 ```
 
 Et pour l'utiliser:
@@ -587,6 +598,16 @@ CREATE_TEST_FUNCTION(uint64_t);
 
 - Ajouter une meilleure gestion des erreurs
   - Pour l'instant je ne fais que retourner 0 mais il faudrait retourner une valeur négative et utiliser errno pour donner plus d'informations sur l'erreur. Vu que ceci n'est pas demandé et la théorie n'est pas encore vue, je ne l'ai pas fait.
+
+# Preuve de fonctionnement
+
+## Natif
+
+![](media/preuve_natif.png)
+
+## De1
+
+![](media/preuve_de1.png)
 
 # Conclusion
 
