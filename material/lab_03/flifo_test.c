@@ -57,9 +57,9 @@ int set_value_size(int fd, size_t size)
  * @param value_size 
  * @return int 
  */
-int read_and_check_value(int fd, uint64_t expected_value, size_t value_size)
+int read_and_check_value(int fd, size_t expected_value, size_t value_size)
 {
-	uint64_t value = 0;
+	size_t value = 0;
 	ssize_t nb_read = read(fd, (void *)&value, value_size);
 	if (nb_read < 0) {
 		perror("read:");
@@ -67,7 +67,7 @@ int read_and_check_value(int fd, uint64_t expected_value, size_t value_size)
 	}
 
 	if (value != expected_value) {
-		printf("Error: %ld != %ld\n", value, expected_value);
+		printf("Error: %zu != %zu\n", value, expected_value);
 		return -1;
 	}
 

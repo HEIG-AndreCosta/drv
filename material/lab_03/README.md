@@ -498,7 +498,7 @@ static ssize_t flifo_write(struct file *filp, const char __user *buf,
 
 Le code complet peut etre trouvé dans le fichier [`flifo.c`](./flifo_module/flifo.c).
 
-## Compilation
+## Compilation et utilisation
 
 ### Natif
 
@@ -506,6 +506,12 @@ Pour compiler le module, il suffit de lancer la commande `make` dans le dossier 
 
 ```shell
 make
+```
+
+Et ensuite pour l'insérer:
+
+```shell
+insmod flifo.ko
 ```
 
 ### Cross-compilation

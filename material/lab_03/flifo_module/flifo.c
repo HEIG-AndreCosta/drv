@@ -42,12 +42,13 @@ static int mode; // Mode of the list (FIFO or LIFO)
 static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 			  loff_t *ppos)
 {
+	uint8_t *buffer;
 	if (buf == NULL || count % value_size != 0 || count > value_count) {
 		return 0;
 	}
 	DBG("Reading %lu values\n", count / value_size);
 	//create a temporary buffer to stock the data
-	uint8_t *buffer = kmalloc(count, GFP_KERNEL);
+	buffer = kmalloc(count, GFP_KERNEL);
 
 	if (!buffer) {
 		return 0;
@@ -154,13 +155,13 @@ static void write_to_list(uint8_t *buffer, size_t count, uint8_t *dst,
 static ssize_t flifo_write(struct file *filp, const char __user *buf,
 			   size_t count, loff_t *ppos)
 {
+	uint8_t *buffer;
 	if (count == 0 || count % value_size != 0 ||
 	    value_count + count > NB_VALUES) {
 		return 0;
 	}
 	DBG("Writing %lu values\n", count / value_size);
 	*ppos = 0;
-	uint8_t *buffer;
 
 	buffer = kmalloc(count, GFP_KERNEL);
 
@@ -267,23 +268,24 @@ static struct miscdevice flifo_miscdev = {
 };
 static int __init flifo_init(void)
 {
+	int ret;
 	next_in = 0;
 	value_count = 0;
 	value_size = 1;
 	mode = MODE_FIFO;
 
 	//	register_chrdev(MAJOR_NUM, DEVICE_NAME, &flifo_fops);
-	int ret = misc_register(&flifo_miscdev);
+	ret = misc_register(&flifo_miscdev);
 	if (ret) {
 		pr_err("misc_register failed\n");
 		return ret;
 	}
 	pr_info("FLIFO ready!\n");
 	pr_info("ioctl FLIFO_CMD_RESET: %u\n", FLIFO_CMD_RESET);
-	pr_info("ioctl FLIFO_CMD_CHANGE_MODE: %lu\n", FLIFO_CMD_CHANGE_MODE);
-	pr_info("ioctl FLIFO_CMD_CHANGE_VALUE_SIZE: %lu\n",
+	pr_info("ioctl FLIFO_CMD_CHANGE_MODE: %zu\n", FLIFO_CMD_CHANGE_MODE);
+	pr_info("ioctl FLIFO_CMD_CHANGE_VALUE_SIZE: %zu\n",
 		FLIFO_CMD_CHANGE_VALUE_SIZE);
-	pr_info("Current integer size: %lu\n", value_size);
+	pr_info("Current integer size: %zu\n", value_size);
 
 	return 0;
 }
