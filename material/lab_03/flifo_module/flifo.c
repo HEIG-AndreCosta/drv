@@ -9,14 +9,25 @@
 
 #include "flifo.h"
 
+#define DEBUGGING 0
+
+// Define DBG to print only if DEBUGGING is set
+#if DEBUGGING
+#define DBG(fmt, ...) pr_info(fmt, ##__VA_ARGS__)
+#else
+#define DBG(fmt, ...)
+#endif
+
 #define DEVICE_NAME "flifo"
 
-#define NB_VALUES   16
+#define NB_VALUES   64
 
-static int64_t values[NB_VALUES];
-static size_t next_in;
-static size_t nb_values;
-static int mode;
+static size_t value_size; // Size of the integer value
+static size_t value_count; // Number of values in the list
+static uint8_t values[NB_VALUES]; // List of values
+
+static size_t next_in; // Next position to write in the list
+static int mode; // Mode of the list (FIFO or LIFO)
 
 /**
  * @brief Device file read callback to read the value in the list.
@@ -31,31 +42,16 @@ static int mode;
 static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 			  loff_t *ppos)
 {
-	typedef union {
-		char buffer[8];
-		int64_t val64;
-	} value_t;
-
-	value_t value;
-
-	if (buf == NULL || nb_values == 0) {
+	if (buf == NULL || count % value_size != 0 || count > value_count) {
 		return 0;
 	}
+	DBG("Reading %lu values\n", count / value_size);
+	//create a temporary buffer to stock the data
+	uint8_t *buffer = kmalloc(count, GFP_KERNEL);
 
-	// Read the value from the list using correct mode.
-	switch (mode) {
-	case MODE_FIFO:
-		value.val64 =
-			values[(NB_VALUES + next_in - nb_values) % NB_VALUES];
-		break;
-	case MODE_LIFO:
-		value.val64 = values[next_in - 1];
-		break;
-	default:
+	if (!buffer) {
 		return 0;
 	}
-
-	pr_info("Read value: %lld\n", value.val64);
 
 	// This a simple usage of ppos to avoid infinit loop with `cat`
 	// it may not be the correct way to do.
@@ -64,18 +60,87 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 	}
 	*ppos = 0;
 
-	if (copy_to_user(buf, &value.val64, sizeof(value.val64)) != 0) {
+	// Read the values from the list 1 byte at a time
+	// Can't use memcpy because may not be contiguous depending
+	// on where we are on our circular buffer
+	// Also we can't use memcpy if we are in LIFO mode
+	for (size_t i = 0; i < count; ++i) {
+		uint8_t value;
+		// Read the value from the list using correct mode.
+		switch (mode) {
+		case MODE_FIFO:
+			value = values[(NB_VALUES + next_in - value_count) %
+				       NB_VALUES];
+			break;
+		case MODE_LIFO:
+			value = values[next_in - 1];
+			break;
+		default:
+			return 0;
+		}
+		// Store the value in our buffer
+		buffer[i] = value;
+
+		// Update the next_in and value_count
+		--value_count;
+		if (mode == MODE_LIFO) {
+			--next_in;
+		}
+	}
+
+	for (size_t i = 0; i < count; i++) {
+		DBG("Buffer[%lu] = %u\n", i, buffer[i]);
+	}
+	// Copy our buffer to the user space buffer
+	if (copy_to_user(buf, buffer, count) != 0) {
+		kfree(buffer);
 		return 0;
 	}
-
-	if (mode == MODE_LIFO) {
-		next_in--;
-	}
-	nb_values--;
-	pr_info("Read Ok\n");
-	return sizeof(value.val64);
+	DBG("Read Ok, next_in: %lu\n", next_in);
+	kfree(buffer);
+	return count;
 }
-
+/**
+ * @brief  writes the values in buffer to our dst depending on the mode
+ * This function updates next_in and value_count
+ * @param buffer the buffer containing the values to write
+ * @param count  the buffer size
+ * @param dst    the destination buffer
+ * @param size the size of the values to write
+ */
+static void write_to_list(uint8_t *buffer, size_t count, uint8_t *dst,
+			  size_t size)
+{
+	const size_t nb_values = count / size;
+	switch (mode) {
+	case MODE_FIFO:
+		for (size_t i = 0; i < count; i++) {
+			dst[next_in] = buffer[i];
+			next_in = (next_in + 1) % NB_VALUES;
+			value_count++;
+		}
+		break;
+	case MODE_LIFO:
+		//Here we need to write each value in reverse order
+		// so that when we read them back we get the original order
+		//eg: size = 2 and user sends us 0x01 0x02
+		//we need to store them as 0x10 0x20 so that
+		// when we read the bytes back we retrieve 0x02 0x01 (lifo order)
+		DBG("Count: %lu\n", count);
+		DBG("Size: %lu\n", size);
+		DBG("Nb_values: %lu\n", nb_values);
+		for (size_t i = 0; i < nb_values; ++i) {
+			for (size_t j = size; j > 0; --j) {
+				size_t src_index = i * size + j - 1;
+				dst[next_in] = buffer[src_index];
+				next_in = (next_in + 1) % NB_VALUES;
+				value_count++;
+			}
+		}
+	default:
+		break;
+	}
+}
 /**
  * @brief Device file write callback to add a value to the list.
  *
@@ -89,51 +154,60 @@ static ssize_t flifo_read(struct file *filp, char __user *buf, size_t count,
 static ssize_t flifo_write(struct file *filp, const char __user *buf,
 			   size_t count, loff_t *ppos)
 {
-	typedef union {
-		char buffer[8];
-		int8_t val8;
-		int16_t val16;
-		int32_t val32;
-		int64_t val64;
-	} value_t;
-
-	value_t value;
-	if (count == 0 || count > 8 || nb_values == NB_VALUES) {
+	if (count == 0 || count % value_size != 0 ||
+	    value_count + count > NB_VALUES) {
 		return 0;
 	}
-
+	DBG("Writing %lu values\n", count / value_size);
 	*ppos = 0;
+	uint8_t *buffer;
 
-	// value.buffer = kmalloc(8, GFP_KERNEL);
+	buffer = kmalloc(count, GFP_KERNEL);
+
+	if (!buffer) {
+		return 0;
+	}
 
 	// Get the value and convert it to an integer.
-	if (copy_from_user(value.buffer, buf, count) != 0) {
+	if (copy_from_user(buffer, buf, count) != 0) {
+		kfree(buffer);
 		return 0;
 	}
-
-	// Add the value in the list.
-	switch (count) {
-	case 1:
-		value.val64 = value.val8;
-		break;
-	case 2:
-		value.val64 = value.val16;
-		break;
-	case 4:
-		value.val64 = value.val32;
-		break;
-	case 8:
-		break;
-	default:
-		return 0;
+	for (size_t i = 0; i < count; i++) {
+		DBG("Buffer[%lu] = %u\n", i, buffer[i]);
 	}
-	pr_info("Write value: %lld\n", value.val64);
-	values[next_in] = value.val64;
-	next_in = (next_in + 1) % NB_VALUES;
-	nb_values++;
+	write_to_list(buffer, count, values, value_size);
 
-	pr_info("Write Ok\n");
+	DBG("Write Ok, next_id %lu\n", next_in);
+	kfree(buffer);
 	return count;
+}
+
+/**
+ * @brief Checks if the integer value is valid 
+ * Size should be 1, 2, 4 or 8
+ * @param arg the argument to check
+ * @return 1 if size is valid, 0 otherwise 
+ */
+static int is_size_valid(unsigned long arg)
+{
+	int possible_values[] = { 1, 2, 4, 8 };
+	ssize_t size = sizeof(possible_values) / sizeof(possible_values[0]);
+	for (int i = 0; i < size; ++i) {
+		if (possible_values[i] == arg) {
+			return 1;
+		}
+	}
+	return 0;
+}
+/**
+ * @brief Resets the list 
+ * 
+ */
+static void reset_list(void)
+{
+	next_in = 0;
+	value_count = 0;
 }
 
 /**
@@ -153,8 +227,7 @@ static long flifo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
 	case FLIFO_CMD_RESET:
-		next_in = 0;
-		nb_values = 0;
+		reset_list();
 		break;
 
 	case FLIFO_CMD_CHANGE_MODE:
@@ -162,8 +235,19 @@ static long flifo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			return -1;
 		}
 		mode = arg;
+		pr_info("Resetting list\n");
+		reset_list();
 		break;
-
+	case FLIFO_CMD_CHANGE_VALUE_SIZE:
+		if (!is_size_valid(arg)) {
+			pr_err("Invalid value size\n");
+			return -1;
+		}
+		value_size = arg;
+		DBG("Value size changed to %lu\n", value_size);
+		pr_info("Resetting list\n");
+		reset_list();
+		break;
 	default:
 		break;
 	}
@@ -184,7 +268,8 @@ static struct miscdevice flifo_miscdev = {
 static int __init flifo_init(void)
 {
 	next_in = 0;
-	nb_values = 0;
+	value_count = 0;
+	value_size = 1;
 	mode = MODE_FIFO;
 
 	//	register_chrdev(MAJOR_NUM, DEVICE_NAME, &flifo_fops);
@@ -196,6 +281,9 @@ static int __init flifo_init(void)
 	pr_info("FLIFO ready!\n");
 	pr_info("ioctl FLIFO_CMD_RESET: %u\n", FLIFO_CMD_RESET);
 	pr_info("ioctl FLIFO_CMD_CHANGE_MODE: %lu\n", FLIFO_CMD_CHANGE_MODE);
+	pr_info("ioctl FLIFO_CMD_CHANGE_VALUE_SIZE: %lu\n",
+		FLIFO_CMD_CHANGE_VALUE_SIZE);
+	pr_info("Current integer size: %lu\n", value_size);
 
 	return 0;
 }
