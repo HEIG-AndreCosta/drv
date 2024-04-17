@@ -14,12 +14,22 @@
 
 #include <linux/string.h>
 
-#define MAJOR_NUM 98
-#define MAJMIN MKDEV(MAJOR_NUM, 0)
-#define DEVICE_NAME "parrot"
+#define START_BUFFER_CAPACITY 8
+#define MAX_BUFFER_CAPACITY   1024
+
+#define MAJOR_NUM	      98
+#define MAJMIN		      MKDEV(MAJOR_NUM, 0)
+#define DEVICE_NAME	      "parrot"
 
 static struct cdev cdev;
 static struct class *cl;
+struct buffer {
+	uint8_t *data;
+	size_t size;
+	size_t capacity;
+};
+
+static struct buffer buffer;
 
 /**
  * @brief Read back previously written data in the internal buffer.
@@ -36,7 +46,18 @@ static struct class *cl;
 static ssize_t parrot_read(struct file *filp, char __user *buf, size_t count,
 			   loff_t *ppos)
 {
-	return 0;
+	if (*ppos >= buffer.size) {
+		return 0;
+	}
+	if (*ppos + count > buffer.size) {
+		count = buffer.size - *ppos;
+	}
+	if (copy_to_user(buf, buffer.data + *ppos, count) != 0) {
+		return -EFAULT;
+	}
+	*ppos += count;
+
+	return count;
 }
 
 /**
@@ -54,7 +75,37 @@ static ssize_t parrot_read(struct file *filp, char __user *buf, size_t count,
 static ssize_t parrot_write(struct file *filp, const char __user *buf,
 			    size_t count, loff_t *ppos)
 {
-	return 0;
+	if (*ppos + count >= buffer.capacity) {
+		size_t new_capacity = buffer.capacity;
+		uint8_t *new_buffer = NULL;
+
+		if (buffer.capacity == MAX_BUFFER_CAPACITY) {
+			pr_info("Buffer at max capacity\n");
+			return -ENOMEM;
+		}
+		new_capacity = buffer.capacity;
+
+		do {
+			new_capacity *= 2;
+		} while (new_capacity < *ppos + count);
+
+		new_buffer = krealloc(buffer.data, new_capacity, GFP_KERNEL);
+
+		if (!new_buffer) {
+			pr_err("Error reallocating buffer\n");
+			return -ENOMEM;
+		}
+		buffer.data = new_buffer;
+		buffer.capacity = new_capacity;
+	}
+
+	if (copy_from_user(buffer.data + *ppos, buf, count) != 0) {
+		return -EFAULT;
+	}
+	buffer.size += count;
+	*ppos += count;
+
+	return count;
 }
 
 /**
@@ -91,30 +142,46 @@ static int __init parrot_init(void)
 	cl = class_create(THIS_MODULE, DEVICE_NAME);
 	if (cl == NULL) {
 		pr_err("Parrot: Error creating class\n");
-		unregister_chrdev_region(MAJMIN, 1);
-		return -1;
+		err = -1;
+		goto err_class_create;
 	}
 	cl->dev_uevent = parrot_uevent;
 
 	if (device_create(cl, NULL, MAJMIN, NULL, DEVICE_NAME) == NULL) {
 		pr_err("Parrot: Error creating device\n");
-		class_destroy(cl);
-		unregister_chrdev_region(MAJMIN, 1);
-		return -1;
+		err = -1;
+		goto err_device_create;
 	}
 
 	cdev_init(&cdev, &parrot_fops);
 	err = cdev_add(&cdev, MAJMIN, 1);
 	if (err < 0) {
 		pr_err("Parrot: Adding char device failed\n");
-		device_destroy(cl, MAJMIN);
-		class_destroy(cl);
-		unregister_chrdev_region(MAJMIN, 1);
-		return err;
+		goto err_cdev_add;
 	}
+	buffer.data = kmalloc(START_BUFFER_CAPACITY, GFP_KERNEL);
+
+	if (!buffer.data) {
+		pr_err("Parrot: Error allocating buffer\n");
+		err = -ENOMEM;
+		goto err_buffer_create;
+	}
+	buffer.size = 0;
+	buffer.capacity = START_BUFFER_CAPACITY;
 
 	pr_info("Parrot ready!\n");
+
 	return 0;
+
+err_buffer_create:
+	kfree(buffer.data);
+err_cdev_add:
+	device_destroy(cl, MAJMIN);
+err_device_create:
+	class_destroy(cl);
+err_class_create:
+	unregister_chrdev_region(MAJMIN, 1);
+	return err;
 }
 
 static void __exit parrot_exit(void)
@@ -124,7 +191,7 @@ static void __exit parrot_exit(void)
 	device_destroy(cl, MAJMIN);
 	class_destroy(cl);
 	unregister_chrdev_region(MAJMIN, 1);
-
+	kfree(buffer.data);
 	pr_info("Parrot done!\n");
 }
 
