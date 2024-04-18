@@ -155,3 +155,168 @@ All data were correct
 ```
 
 # Exercice 2
+
+Pour ceci, la partie compliqué et de configurer notre driver.
+
+Une fois qu'on arrive à configurer pour avoir nos interrupts, la logique de l'interrupt est assez simple.
+
+Créeons une structure pour contenir des pointeurs sur nos registres et notre device.
+
+```c
+struct data {
+	void __iomem *sw;
+	void __iomem *leds;
+	void __iomem *btn_data;
+	void __iomem *btn_interrupt_mask;
+	void __iomem *btn_edge_capture;
+	struct device *dev;
+};
+```
+
+Créeons déjà la fonction d'interruption.
+
+```c
+static void rearm_pb_interrupts(struct data *priv)
+{
+	iowrite8(0x0F, priv->btn_edge_capture);
+}
+
+static irqreturn_t irq_handler(int irq, void *dev_id)
+{
+	struct data *priv = (struct data *)dev_id;
+	uint8_t pressed = ioread8(priv->btn_edge_capture);
+
+	(void)irq; // unused
+
+	if (pressed & 0x01) {
+		iowrite16(ioread16(priv->sw), priv->leds);
+	} else if (pressed & 0x02) {
+		iowrite16(ioread16(priv->leds) >> 1, priv->leds);
+	}
+	rearm_pb_interrupts(priv);
+
+	return IRQ_HANDLED;
+}
+```
+
+Ensuite, on doit configurer notre driver pour qu'il puisse recevoir des interruptions.
+
+```c
+static int switch_copy_probe(struct platform_device *pdev)
+{
+	void __iomem *base_pointer;
+	struct data *priv;
+
+	// Get the interrupt number
+	int btn_interrupt = platform_get_irq(pdev, 0);
+
+	if (btn_interrupt < 0) {
+		return btn_interrupt;
+	}
+
+	// Allocate memory for our data structure
+	priv = devm_kzalloc(&pdev->dev, sizeof(struct data), GFP_KERNEL);
+	if (!priv) {
+		pr_err("Failed to allocate memory\n");
+		return -ENOMEM;
+	}
+
+	// Get the base address of the device registers
+	base_pointer = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(base_pointer)) {
+		kfree(priv);
+		return PTR_ERR(base_pointer);
+	}
+
+	// Request the interrupt. This won't make the interrupt fire yet so it's safe to do it here
+	if (devm_request_irq(&pdev->dev, btn_interrupt, irq_handler, 0,
+			     "switch_copy", priv) < 0) {
+		kfree(priv);
+		return -EBUSY;
+	}
+
+	// Compute the addresses of the device registers
+	priv->leds = base_pointer + LEDS_OFFSET;
+	priv->sw = base_pointer + SWITCH_OFFSET;
+	priv->btn_data = base_pointer + BTN_DATA_OFFSET;
+	priv->btn_interrupt_mask = base_pointer + BTN_INTERRUPT_MASK_OFFSET;
+	priv->btn_edge_capture = base_pointer + BTN_EDGE_CAPTURE_OFFSET;
+	priv->dev = &pdev->dev; // not used in this example but could be useful later
+
+	// Set the driver data on the platform bus
+	platform_set_drvdata(pdev, priv);
+
+	//Enabling interrupts on the hardware
+	iowrite8(0xF, priv->btn_interrupt_mask);
+
+	// Arming interrupts
+	rearm_pb_interrupts(priv);
+
+	return 0;
+}
+```
+
+Rien de très sourcier, le cours avait déjà tout expliqué.
+
+Pour la fonction remove, il faut libérer les ressources.
+
+```c
+static int switch_copy_remove(struct platform_device *pdev)
+{
+	// Get the driver data
+	struct data *priv = platform_get_drvdata(pdev);
+
+	if (!priv) {
+		pr_err("Failed to get driver data\n");
+		return -ENODEV;
+	}
+
+	pr_info("Removing driver\n");
+
+	// Disabling interrupts
+	iowrite8(0x0, priv->btn_interrupt_mask);
+
+	// Clearing the LEDs
+	iowrite16(0x0, priv->leds);
+
+	// Free the memory
+	kfree(priv);
+	return 0;
+}
+```
+
+## Compilation et test
+
+```bash
+$ make
+Building with kernel sources in /home/andre/dev/heig-vd/drv/linux-socfpga/
+make ARCH=arm CROSS_COMPILE=/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf- -C /home/andre/dev/heig-vd/drv/linux-socfpga/ M=/home/andre/dev/heig-vd/drv/drv24/material/lab_04/switch_copy_module -W -Wall -Wstrict-prototypes -Wmissing-prototypes
+make[1]: Entering directory '/home/andre/dev/heig-vd/drv/linux-socfpga'
+  CC [M]  /home/andre/dev/heig-vd/drv/drv24/material/lab_04/switch_copy_module/switch_copy.o
+  MODPOST /home/andre/dev/heig-vd/drv/drv24/material/lab_04/switch_copy_module/Module.symvers
+  CC [M]  /home/andre/dev/heig-vd/drv/drv24/material/lab_04/switch_copy_module/switch_copy.mod.o
+  LD [M]  /home/andre/dev/heig-vd/drv/drv24/material/lab_04/switch_copy_module/switch_copy.ko
+make[1]: Leaving directory '/home/andre/dev/heig-vd/drv/linux-socfpga'
+rm -rf *.o *~ core .depend .*.cmd *.mod *.mod.c .tmp_versions modules.order Module.symvers *.a
+
+$ mv switch_copy.ko ~/export/drv
+```
+
+Pour tester, il faut charger le module et ensuite appuyer sur les boutons.
+
+```bash
+root@de1soclinux:~/drv# insmod switch_copy.ko
+```
+
+On peut aussi vérifier que les interruptions sont bien activées.
+
+```bash
+root@de1soclinux:~/drv# cat /proc/interrupts | grep switch_copy
+ 50:         65          0 GIC-0  73 Edge      switch_copy
+```
+
+On peut aussi vérifier que lors que l'on enlève le module, les leds sont bien éteintes.
+
+```bash
+root@de1soclinux:~/drv# rmmod switch_copy
+```

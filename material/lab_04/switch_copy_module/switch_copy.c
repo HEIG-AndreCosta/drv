@@ -9,7 +9,7 @@
 #include <linux/of.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
-#include <linux/iomap.h>
+#include <asm/io.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("REDS");
@@ -32,7 +32,6 @@ struct data {
 
 static void rearm_pb_interrupts(struct data *priv)
 {
-	//clear interrupts
 	iowrite8(0x0F, priv->btn_edge_capture);
 }
 
@@ -58,65 +57,73 @@ static int switch_copy_probe(struct platform_device *pdev)
 	void __iomem *base_pointer;
 	struct data *priv;
 
+	// Get the interrupt number
 	int btn_interrupt = platform_get_irq(pdev, 0);
 
-	pr_info("Switch copy driver probe\n");
-	pr_info("Getting the interrupt number\n");
-	pr_info("btn_interrupt: %d\n", btn_interrupt);
 	if (btn_interrupt < 0) {
 		return btn_interrupt;
 	}
-	pr_info("Allocating memory for the driver\n");
+
+	// Allocate memory for our data structure
 	priv = devm_kzalloc(&pdev->dev, sizeof(struct data), GFP_KERNEL);
 	if (!priv) {
 		pr_err("Failed to allocate memory\n");
 		return -ENOMEM;
 	}
 
-	pr_info("Mapping device registers\n");
+	// Get the base address of the device registers
 	base_pointer = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base_pointer)) {
 		kfree(priv);
 		return PTR_ERR(base_pointer);
 	}
-	pr_info("base_pointer: %p\n", base_pointer);
 
-	priv->leds = base_pointer + LEDS_OFFSET;
-	priv->sw = base_pointer + SWITCH_OFFSET;
-	priv->btn_data = base_pointer + BTN_DATA_OFFSET;
-	priv->btn_interrupt_mask = base_pointer + BTN_INTERRUPT_MASK_OFFSET;
-	priv->btn_edge_capture = base_pointer + BTN_EDGE_CAPTURE_OFFSET;
-	pr_info("Requesting interrupt\n");
+	// Request the interrupt. This won't make the interrupt fire yet so it's safe to do it here
 	if (devm_request_irq(&pdev->dev, btn_interrupt, irq_handler, 0,
 			     "switch_copy", priv) < 0) {
 		kfree(priv);
 		return -EBUSY;
 	}
-	pr_info("%p %p\n", priv->btn_data, priv->btn_interrupt_mask);
-	iowrite8(0xF, base_pointer + BTN_INTERRUPT_MASK_OFFSET);
+
+	// Compute the addresses of the device registers
+	priv->leds = base_pointer + LEDS_OFFSET;
+	priv->sw = base_pointer + SWITCH_OFFSET;
+	priv->btn_data = base_pointer + BTN_DATA_OFFSET;
+	priv->btn_interrupt_mask = base_pointer + BTN_INTERRUPT_MASK_OFFSET;
+	priv->btn_edge_capture = base_pointer + BTN_EDGE_CAPTURE_OFFSET;
 	priv->dev = &pdev->dev;
 
-	pr_info("Registering the platform device\n");
 	// Set the driver data on the platform bus
 	platform_set_drvdata(pdev, priv);
 
-	pr_info("Arming interrupts\n");
+	//Enabling interrupts on the hardware
+	iowrite8(0xF, priv->btn_interrupt_mask);
+
 	// Arming interrupts
-	//rearm_pb_interrupts(priv);
-	pr_info("Switch copy driver probe done\n");
+	rearm_pb_interrupts(priv);
+
 	return 0;
 }
 
 static int switch_copy_remove(struct platform_device *pdev)
 {
+	// Get the driver data
 	struct data *priv = platform_get_drvdata(pdev);
-	pr_info("Switch copy driver remove\n");
+
 	if (!priv) {
 		pr_err("Failed to get driver data\n");
 		return -ENODEV;
 	}
-	//	iowrite8(0x0, priv->btn_interrupt_mask);
-	//iowrite16(0x0, priv->leds);
+
+	pr_info("Removing driver\n");
+
+	// Disabling interrupts
+	iowrite8(0x0, priv->btn_interrupt_mask);
+
+	// Clearing the LEDs
+	iowrite16(0x0, priv->leds);
+
+	// Free the memory
 	kfree(priv);
 	return 0;
 }
