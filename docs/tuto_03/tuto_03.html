@@ -1,0 +1,144 @@
+
+<!DOCTYPE html>
+
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>Tutoriel 3 — REDS-adder driver v2.1 et v3.1 &#8212; Documentation DRV 2024 </title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/color.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <script src="../_static/translations.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Recherche" href="../search.html" />
+    <link rel="next" title="Laboratoire 5 — Développement de drivers kernel-space II" href="../lab_05/lab_05.html" />
+    <link rel="prev" title="Laboratoire 4 — Développement de drivers kernel-space I" href="../lab_04/lab_04.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="tutoriel-3-reds-adder-driver-v2-1-et-v3-1">
+<span id="tutoriel3"></span><h1>Tutoriel 3 —  REDS-adder driver v2.1 et v3.1<a class="headerlink" href="#tutoriel-3-reds-adder-driver-v2-1-et-v3-1" title="Lien permanent vers ce titre">¶</a></h1>
+<figure class="align-right">
+<a class="reference internal image-reference" href="../_images/logo_drv.png"><img alt="../_images/logo_drv.png" src="../_images/logo_drv.png" style="width: 6cm;" /></a>
+</figure>
+<p>Dans ce tutoriel, on explorera davantage de possibilités offertes par le Linux
+Device Model pour améliorer notre driver.</p>
+<p>Les fichiers de ce tutoriel se trouvent dans le dépôt git.</p>
+<p><strong>sysfs</strong> nous permet d’exposer à l’utilisateur une série de propriétés, afin
+de pouvoir aisément configurer et interagir avec notre dispositif.
+Dans le contexte de notre driver, on utilisera sysfs pour :</p>
+<ul class="simple">
+<li><p>voir la taille maximale de la chaîne de caractères à chiffrer;</p></li>
+<li><p>voir et modifier le seuil utilisé pour le chiffrement;</p></li>
+<li><p>voir et modifier l’opération effectuée par le dispositif (chiffrement ou
+déchiffrement).</p></li>
+</ul>
+<p>Le driver v2.1 est identique à la version 1.1, sauf qu’une entrée dans sysfs a
+été ajoutée — n’hésitez pas à comparer les deux versions du driver à l’aide
+d’un outil tel que <a class="reference external" href="https://meldmerge.org/">meld</a>, cela vous montrera comment
+vous pouvez ajouter des fichiers dans sysfs.</p>
+<p>Pouvoir changer ces propriétés à la volée introduit des problèmes potentiels : par
+exemple, qu’est-ce qui va se passer si l’on modifie l’opération effectuée pendant
+qu’elle est en cours ?
+Pour éviter ces situations, une primitive de synchronisation (mutex) a été
+introduite.</p>
+<p>De plus, afin de mieux pouvoir gérer les données stockées dans notre driver, le
+vecteur qu’on avait utilisé dans le tutoriel 2 a été remplacé par une KFIFO.</p>
+<p>Le driver v3.1 est donc une version bien plus complète du driver pour notre
+dispositif.
+Essayez de comprendre ses mécanismes de fonctionnement et cherchez à
+l’améliorer en rajoutant des fonctionnalités et en optimisant ses opérations.</p>
+<p><em>Have fun</em> et, bien sûr, on est à votre disposition pour toute question éventuelle ! :-)</p>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">DRV 2024</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../helper/helper.html">Helper</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../helper/ssh.html">Mise en place SSH</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_00/lab_00.html">Laboratoire 0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_01/lab_01.html">Laboratoire 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tuto_01/tuto_01.html">Tuto 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_02/lab_02.html">Laboratoire 2</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tuto_02/tuto_02.html">Tuto 2</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_03/lab_03.html">Laboratoire 3</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_04/lab_04.html">Laboratoire 4</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Tuto 3</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../lab_05/lab_05.html">Laboratoire 5</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="../lab_04/lab_04.html" title="Chapitre précédent">Laboratoire 4 — Développement de drivers kernel-space I</a></li>
+      <li>Next: <a href="../lab_05/lab_05.html" title="Chapitre suivant">Laboratoire 5 — Développement de drivers kernel-space II</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Recherche rapide</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2024, REDS institute.
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>
