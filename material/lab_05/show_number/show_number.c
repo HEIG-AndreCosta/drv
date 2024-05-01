@@ -14,7 +14,8 @@
 #include <linux/fs.h> /* Needed for file_operations */
 #include <linux/kfifo.h>
 #include <linux/kthread.h>
-#define DEBUGGING 0
+#include <linux/delay.h>
+#define DEBUGGING 1
 
 // Define DBG to print only if DEBUGGING is set
 #if DEBUGGING
@@ -31,7 +32,8 @@ MODULE_DESCRIPTION(
 	"A driver that displays numbers on the de1's 7-segment display");
 
 #define LEDS_OFFSET		  0x00
-#define SEVEN_SEG_OFFSET	  0x20
+#define SEVEN_SEG_LOW_OFFSET	  0x20
+#define SEVEN_SEG_HIGH_OFFSET	  0x30
 #define SWITCH_OFFSET		  0x40
 #define BTN_DATA_OFFSET		  0x50
 #define BTN_EDGE_CAPTURE_OFFSET	  0x5C
@@ -40,9 +42,28 @@ MODULE_DESCRIPTION(
 #define FIFO_TYPE		  uint32_t
 #define FIFO_CAPACITY		  64
 #define MAX_VALUE		  999999
+static const uint8_t val_to_hex_7_seg[] = {
+	0x3F, // 0
+	0x06, // 1
+	0x5B, // 2
+	0x4F, // 3
+	0x66, // 4
+	0x6D, // 5
+	0x7D, // 6
+	0x07, // 7
+	0x7F, // 8
+	0x6F, // 9
+	0x77, // a
+	0x7C, // b
+	0x58, // c
+	0x5E, // d
+	0x79, // e
+	0x71, // f
+};
 struct data {
 	void __iomem *sw;
-	void __iomem *seven_segment;
+	void __iomem *seven_segment_low;
+	void __iomem *seven_segment_high;
 	void __iomem *leds;
 	void __iomem *btn_data;
 	void __iomem *btn_interrupt_mask;
@@ -52,26 +73,35 @@ struct data {
 
 	bool stop_thread;
 	struct device *dev;
+	struct miscdevice miscdev;
 };
 
 static void rearm_pb_interrupts(struct data *priv)
 {
 	iowrite8(0x0F, priv->btn_edge_capture);
 }
-static void display_number(void __iomem *seven_segment, uint32_t number)
+
+static void display_number(void __iomem *seven_seg_low,
+			   void __iomem *seven_seg_high, uint32_t number)
 {
-	uint8_t digits[6];
+	uint8_t hex_digits[6];
 	uint8_t i;
+	uint32_t lower_seg = 0;
+	uint32_t higher_seg = 0;
 	for (i = 0; i < 6; i++) {
-		digits[i] = number % 10;
+		hex_digits[i] = val_to_hex_7_seg[number % 10];
 		number /= 10;
 	}
-	pr_info("Displaying number %d%d%d%d%d%d\n", digits[5], digits[4],
-		digits[3], digits[2], digits[1], digits[0]);
 
-	// iowrite8(digits[0] | (digits[1] << 4), seven_segment);
-	// iowrite8(digits[2] | (digits[3] << 4), seven_segment + 1);
-	// iowrite8(digits[4] | (digits[5] << 4), seven_segment + 2);
+	for (i = 0; i < 4; ++i) {
+		lower_seg |= hex_digits[i] << (i * 8);
+	}
+	for (i = 4; i < 6; ++i) {
+		higher_seg |= hex_digits[i] << ((i - 4) * 8);
+	}
+	DBG("Lower: %x, Higher: %x", lower_seg, higher_seg);
+	iowrite32(lower_seg, seven_seg_low);
+	iowrite32(higher_seg, seven_seg_high);
 }
 
 static irqreturn_t irq_handler(int irq, void *dev_id)
@@ -80,7 +110,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	uint8_t pressed = ioread8(priv->btn_edge_capture);
 
 	(void)irq; // unused
-
+	DBG("Pressed %x", pressed);
 	if (pressed & 0x01) {
 		priv->stop_thread = true;
 	}
@@ -100,7 +130,10 @@ static int seven_seg_task(void *arg)
 			    sizeof(FIFO_TYPE)) {
 				continue;
 			}
-			display_number(priv->seven_segment, value);
+			DBG("Display: %d", value);
+			display_number(priv->seven_segment_low,
+				       priv->seven_segment_high, value);
+			msleep(1000);
 		}
 	}
 	return 0;
@@ -119,7 +152,9 @@ static ssize_t on_write(struct file *filp, const char __user *buf, size_t count,
 			loff_t *ppos)
 {
 	uint8_t *buffer;
-	struct data *priv = filp->private_data;
+	struct data *priv =
+		container_of(filp->private_data, struct data, miscdev);
+
 	size_t nb_values = count / sizeof(FIFO_TYPE);
 
 	if (count % sizeof(FIFO_TYPE) != 0 ||
@@ -127,7 +162,7 @@ static ssize_t on_write(struct file *filp, const char __user *buf, size_t count,
 		return -EINVAL;
 	}
 
-	DBG("Writing %lu values\n", nb_values);
+	DBG("Writing %zu values\n", nb_values);
 
 	*ppos = 0;
 
@@ -163,11 +198,6 @@ const static struct file_operations fops = {
 	.owner = THIS_MODULE,
 	// .read = on_read,
 	.write = on_write,
-};
-static struct miscdevice miscdev = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = DEVICE_NAME,
-	.fops = &fops,
 };
 
 static int on_probe(struct platform_device *pdev)
@@ -205,12 +235,21 @@ static int on_probe(struct platform_device *pdev)
 
 	// Compute the addresses of the device registers
 	priv->leds = base_pointer + LEDS_OFFSET;
-	priv->seven_segment = base_pointer + SEVEN_SEG_OFFSET;
+	priv->seven_segment_low = base_pointer + SEVEN_SEG_LOW_OFFSET;
+	priv->seven_segment_high = base_pointer + SEVEN_SEG_HIGH_OFFSET;
 	priv->sw = base_pointer + SWITCH_OFFSET;
 	priv->btn_data = base_pointer + BTN_DATA_OFFSET;
 	priv->btn_interrupt_mask = base_pointer + BTN_INTERRUPT_MASK_OFFSET;
 	priv->btn_edge_capture = base_pointer + BTN_EDGE_CAPTURE_OFFSET;
+	priv->miscdev = (struct miscdevice){
+		.minor = MISC_DYNAMIC_MINOR,
+		.name = DEVICE_NAME,
+		.fops = &fops,
+	};
+	// Init our queue
 	INIT_KFIFO(priv->fifo);
+
+	// Init our completion
 	init_completion(&priv->zero_found);
 
 	priv->dev = &pdev->dev;
@@ -224,16 +263,16 @@ static int on_probe(struct platform_device *pdev)
 	// Arming interrupts
 	rearm_pb_interrupts(priv);
 	kthread_run(seven_seg_task, priv, "seven_seg_task");
-	return misc_register(&miscdev);
+	return misc_register(&priv->miscdev);
 }
 
 static int on_remove(struct platform_device *pdev)
 {
-	DBG("Removing\n");
 	struct data *priv = platform_get_drvdata(pdev);
+	DBG("Removing\n");
 	kfifo_free(&priv->fifo);
 
-	misc_deregister(&miscdev);
+	misc_deregister(&priv->miscdev);
 	return 0;
 }
 

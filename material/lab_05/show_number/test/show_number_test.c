@@ -11,7 +11,13 @@ int main()
 		printf("Error opening device\n");
 		return -1;
 	}
-	uint32_t vals[] = { 1, 2, 3, 4, 0 };
-	write(fd, vals, sizeof(vals));
+	{
+		uint32_t vals[] = { 123456, 456789, 3, 40, 0 };
+		write(fd, vals, sizeof(vals));
+	}
+	{
+		uint32_t vals[] = { 1000000, 999999, 0 };
+		write(fd, vals, sizeof(vals));
+	}
 	close(fd);
 }
