@@ -1,0 +1,16 @@
+[
+  {
+    "arguments": [
+      "/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf-gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-o",
+      "/home/andre/export/drv/show_number_test",
+      "show_number_test.c"
+    ],
+    "directory": "/home/andre/dev/heig-vd/drv/drv24/material/lab_05/show_number/test",
+    "file": "/home/andre/dev/heig-vd/drv/drv24/material/lab_05/show_number/test/show_number_test.c",
+    "output": "/home/andre/export/drv/show_number_test"
+  }
+]

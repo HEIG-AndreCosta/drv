@@ -1,6 +1,10 @@
+#include "asm/page.h"
 #include "linux/completion.h"
 #include "linux/container_of.h"
+#include "linux/device.h"
 #include "linux/gfp_types.h"
+#include "linux/sysfs.h"
+#include "linux/types.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -82,6 +86,8 @@ struct data {
 	struct device *dev;
 	struct miscdevice miscdev;
 	struct timer_list timer;
+	uint32_t display_delay;
+	uint32_t display_count;
 };
 
 static void rearm_pb_interrupts(struct data *priv)
@@ -113,7 +119,6 @@ static void display_number(void __iomem *seven_seg_low,
 	for (i = 4; i < 6; ++i) {
 		higher_seg |= hex_digits[i] << ((i - 4) * 8);
 	}
-	DBG("Lower: %x, Higher: %x", lower_seg, higher_seg);
 	iowrite32(lower_seg, seven_seg_low);
 	iowrite32(higher_seg, seven_seg_high);
 }
@@ -144,7 +149,6 @@ static int seven_seg_task(void *arg)
 	struct data *priv = (struct data *)arg;
 	FIFO_TYPE value;
 
-	DBG("Priv: %p\n", priv);
 	while (!priv->thread_over) {
 		bool can_display = !priv->stop_display &&
 				   !kfifo_is_empty(&priv->fifo);
@@ -154,20 +158,17 @@ static int seven_seg_task(void *arg)
 					   priv->seven_segment_high);
 			wait_for_completion(&priv->zero_found);
 		}
-		DBG("Kfifo out\n");
 		if (kfifo_out(&priv->fifo, &value, sizeof(FIFO_TYPE)) !=
 		    sizeof(FIFO_TYPE)) {
 			continue;
 		}
-		DBG("Display: %d\n", value);
 		display_number(priv->seven_segment_low,
 			       priv->seven_segment_high, value);
-		DBG("Mod Timer\n");
-		mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
-		DBG("Wait Completion\n");
+		priv->display_count++;
+		mod_timer(&priv->timer,
+			  jiffies + msecs_to_jiffies(priv->display_delay));
 		wait_for_completion(&priv->timer_done);
 	}
-	DBG("Thread Over\n");
 	return 0;
 }
 /**
@@ -188,7 +189,6 @@ static ssize_t on_write(struct file *filp, const char __user *buf, size_t count,
 		container_of(filp->private_data, struct data, miscdev);
 
 	size_t nb_values = count / sizeof(FIFO_TYPE);
-
 	if (count % sizeof(FIFO_TYPE) != 0 ||
 	    kfifo_avail(&priv->fifo) < count) {
 		return -EINVAL;
@@ -227,6 +227,63 @@ static ssize_t on_write(struct file *filp, const char __user *buf, size_t count,
 	kfree(buffer);
 	return count;
 }
+static ssize_t fifo_len_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	ssize_t rc;
+	struct data *priv = dev_get_drvdata(dev);
+	size_t len = kfifo_len(&priv->fifo);
+	rc = sysfs_emit(buf, "%zu\n", len);
+	return rc;
+}
+static ssize_t display_count_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	ssize_t rc;
+	struct data *priv = dev_get_drvdata(dev);
+	rc = sysfs_emit(buf, "%zu\n", priv->display_count);
+	return rc;
+}
+static ssize_t fifo_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	ssize_t rc;
+	size_t values_read;
+	struct data *priv = dev_get_drvdata(dev);
+	size_t len = kfifo_len(&priv->fifo);
+	FIFO_TYPE *fifo_vals = kzalloc(sizeof(FIFO_TYPE) * len, GFP_KERNEL);
+	if (!fifo_vals) {
+		return -ENOMEM;
+	}
+	rc = kfifo_out_peek(&priv->fifo, fifo_vals, len);
+	values_read = rc * sizeof(FIFO_TYPE);
+
+	for (int i = 0; i < values_read; ++i) {
+		rc = scnprintf(buf + i * 7, PAGE_SIZE, "%6d\n", fifo_vals[i]);
+		if (rc != 7) {
+			return -EFAULT;
+		}
+	}
+	return rc;
+}
+static ssize_t display_time_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	ssize_t rc;
+	struct data *priv = dev_get_drvdata(dev);
+	rc = kstrtoint(buf, 0, &priv->display_delay);
+	if (rc != 0) {
+		rc = -EINVAL;
+	} else {
+		rc = count;
+	}
+	return rc;
+}
+static DEVICE_ATTR_RO(display_count);
+static DEVICE_ATTR_WO(display_time);
+static DEVICE_ATTR_RO(fifo_len);
+static DEVICE_ATTR_RO(fifo);
 
 const static struct file_operations fops = {
 	.owner = THIS_MODULE,
@@ -271,6 +328,28 @@ static int on_probe(struct platform_device *pdev)
 		kfree(priv);
 		return -ENOMEM;
 	}
+	if (device_create_file(&pdev->dev, &dev_attr_fifo) != 0) {
+		kfree(priv);
+		return -EFAULT;
+	}
+	if (device_create_file(&pdev->dev, &dev_attr_fifo_len) != 0) {
+		kfree(priv);
+		device_remove_file(&pdev->dev, &dev_attr_fifo);
+		return -EFAULT;
+	}
+	if (device_create_file(&pdev->dev, &dev_attr_display_time) != 0) {
+		kfree(priv);
+		device_remove_file(&pdev->dev, &dev_attr_fifo);
+		device_remove_file(&pdev->dev, &dev_attr_fifo_len);
+		return -EFAULT;
+	}
+	if (device_create_file(&pdev->dev, &dev_attr_display_count) != 0) {
+		kfree(priv);
+		device_remove_file(&pdev->dev, &dev_attr_fifo);
+		device_remove_file(&pdev->dev, &dev_attr_fifo_len);
+		device_remove_file(&pdev->dev, &dev_attr_display_time);
+		return -EFAULT;
+	}
 	init_completion(&priv->zero_found);
 	init_completion(&priv->timer_done);
 	timer_setup(&priv->timer, on_timer_done, 0);
@@ -289,10 +368,9 @@ static int on_probe(struct platform_device *pdev)
 		.name = DEVICE_NAME,
 		.fops = &fops,
 	};
-
-	DBG("Priv: %p\n", priv);
 	priv->task = kthread_run(seven_seg_task, priv, "seven_seg_task");
-	DBG("Task pointer: %p\n", priv->task);
+	priv->display_delay = 1000;
+	priv->display_count = 0;
 	if (IS_ERR(priv->task)) {
 		kfree(priv);
 		return -EBUSY;
@@ -318,17 +396,20 @@ static int on_remove(struct platform_device *pdev)
 	priv->thread_over = true;
 	complete(&priv->zero_found);
 	complete(&priv->timer_done);
-	DBG("Task pointer: %p\n", priv->task);
 	kthread_stop(priv->task);
-	DBG("Turning off leds\n");
+
 	//Wait for our thread to finish
 	turn_off_seven_seg(priv->seven_segment_low, priv->seven_segment_high);
 	//Free resources
+	device_remove_file(&pdev->dev, &dev_attr_fifo);
+	device_remove_file(&pdev->dev, &dev_attr_fifo_len);
+	device_remove_file(&pdev->dev, &dev_attr_display_time);
+	device_remove_file(&pdev->dev, &dev_attr_display_count);
+	kfifo_free(&priv->fifo);
 	del_timer_sync(&priv->timer);
 	misc_deregister(&priv->miscdev);
 	return 0;
 }
-
 // static ssize_t on_read(struct file *filp, char __user *buf, size_t count,
 // 		       loff_t *ppos)
 // {
