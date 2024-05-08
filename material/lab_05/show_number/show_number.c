@@ -1,3 +1,6 @@
+#include "linux/completion.h"
+#include "linux/container_of.h"
+#include "linux/gfp_types.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -15,6 +18,8 @@
 #include <linux/kfifo.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/timer.h>
+#include <linux/jiffies.h>
 #define DEBUGGING 1
 
 // Define DBG to print only if DEBUGGING is set
@@ -30,7 +35,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("André Costa");
 MODULE_DESCRIPTION(
 	"A driver that displays numbers on the de1's 7-segment display");
-
+#define SENTINEL_VAL		  0
 #define LEDS_OFFSET		  0x00
 #define SEVEN_SEG_LOW_OFFSET	  0x20
 #define SEVEN_SEG_HIGH_OFFSET	  0x30
@@ -68,12 +73,15 @@ struct data {
 	void __iomem *btn_data;
 	void __iomem *btn_interrupt_mask;
 	void __iomem *btn_edge_capture;
-	DECLARE_KFIFO(fifo, FIFO_TYPE, FIFO_CAPACITY);
+	struct kfifo fifo;
 	struct completion zero_found;
-
-	bool stop_thread;
+	struct completion timer_done;
+	struct task_struct *task;
+	bool stop_display;
+	bool thread_over;
 	struct device *dev;
 	struct miscdevice miscdev;
+	struct timer_list timer;
 };
 
 static void rearm_pb_interrupts(struct data *priv)
@@ -81,6 +89,12 @@ static void rearm_pb_interrupts(struct data *priv)
 	iowrite8(0x0F, priv->btn_edge_capture);
 }
 
+static void turn_off_seven_seg(void __iomem *seven_seg_low,
+			       void __iomem *seven_seg_high)
+{
+	iowrite32(0, seven_seg_low);
+	iowrite32(0, seven_seg_high);
+}
 static void display_number(void __iomem *seven_seg_low,
 			   void __iomem *seven_seg_high, uint32_t number)
 {
@@ -112,30 +126,48 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 	(void)irq; // unused
 	DBG("Pressed %x", pressed);
 	if (pressed & 0x01) {
-		priv->stop_thread = true;
+		priv->stop_display = true;
 	}
 	rearm_pb_interrupts(priv);
 
 	return IRQ_HANDLED;
 }
+static void on_timer_done(struct timer_list *t)
+{
+	struct data *priv = from_timer(priv, t, timer);
+	DBG("Timer trigger\n");
+	complete(&priv->timer_done);
+}
+
 static int seven_seg_task(void *arg)
 {
 	struct data *priv = (struct data *)arg;
-	while (!kthread_should_stop()) {
-		wait_for_completion(&priv->zero_found);
-		while (!kthread_should_stop() && !kfifo_is_empty(&priv->fifo) &&
-		       !priv->stop_thread) {
-			FIFO_TYPE value;
-			if (kfifo_out(&priv->fifo, &value, sizeof(FIFO_TYPE)) !=
-			    sizeof(FIFO_TYPE)) {
-				continue;
-			}
-			DBG("Display: %d", value);
-			display_number(priv->seven_segment_low,
-				       priv->seven_segment_high, value);
-			msleep(1000);
+	FIFO_TYPE value;
+
+	DBG("Priv: %p\n", priv);
+	while (!priv->thread_over) {
+		bool can_display = !priv->stop_display &&
+				   !kfifo_is_empty(&priv->fifo);
+		if (!can_display) {
+			priv->stop_display = true;
+			turn_off_seven_seg(priv->seven_segment_low,
+					   priv->seven_segment_high);
+			wait_for_completion(&priv->zero_found);
 		}
+		DBG("Kfifo out\n");
+		if (kfifo_out(&priv->fifo, &value, sizeof(FIFO_TYPE)) !=
+		    sizeof(FIFO_TYPE)) {
+			continue;
+		}
+		DBG("Display: %d\n", value);
+		display_number(priv->seven_segment_low,
+			       priv->seven_segment_high, value);
+		DBG("Mod Timer\n");
+		mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
+		DBG("Wait Completion\n");
+		wait_for_completion(&priv->timer_done);
 	}
+	DBG("Thread Over\n");
 	return 0;
 }
 /**
@@ -179,10 +211,12 @@ static ssize_t on_write(struct file *filp, const char __user *buf, size_t count,
 
 	for (size_t i = 0; i < nb_values; ++i) {
 		FIFO_TYPE value = *(FIFO_TYPE *)&buffer[i * sizeof(FIFO_TYPE)];
-		if (value == 0) {
-			// Handle the case where the value is 0
-			priv->stop_thread = false;
-			complete(&priv->zero_found);
+		DBG("IN: %d", value);
+		if (value == SENTINEL_VAL) {
+			if (priv->stop_display) {
+				priv->stop_display = false;
+				complete(&priv->zero_found);
+			}
 			continue;
 		} else if (value > MAX_VALUE) {
 			//Ignore values that are too big
@@ -233,7 +267,16 @@ static int on_probe(struct platform_device *pdev)
 		return -EBUSY;
 	}
 
-	// Compute the addresses of the device registers
+	if (kfifo_alloc(&priv->fifo, 64 * sizeof(FIFO_TYPE), GFP_KERNEL)) {
+		kfree(priv);
+		return -ENOMEM;
+	}
+	init_completion(&priv->zero_found);
+	init_completion(&priv->timer_done);
+	timer_setup(&priv->timer, on_timer_done, 0);
+	priv->dev = &pdev->dev;
+	priv->stop_display = true;
+	priv->thread_over = false;
 	priv->leds = base_pointer + LEDS_OFFSET;
 	priv->seven_segment_low = base_pointer + SEVEN_SEG_LOW_OFFSET;
 	priv->seven_segment_high = base_pointer + SEVEN_SEG_HIGH_OFFSET;
@@ -246,32 +289,42 @@ static int on_probe(struct platform_device *pdev)
 		.name = DEVICE_NAME,
 		.fops = &fops,
 	};
-	// Init our queue
-	INIT_KFIFO(priv->fifo);
 
-	// Init our completion
-	init_completion(&priv->zero_found);
-
-	priv->dev = &pdev->dev;
-
+	DBG("Priv: %p\n", priv);
+	priv->task = kthread_run(seven_seg_task, priv, "seven_seg_task");
+	DBG("Task pointer: %p\n", priv->task);
+	if (IS_ERR(priv->task)) {
+		kfree(priv);
+		return -EBUSY;
+	}
 	// Set the driver data on the platform bus
 	platform_set_drvdata(pdev, priv);
 
 	//Enabling interrupts on the hardware
 	iowrite8(0xF, priv->btn_interrupt_mask);
-
 	// Arming interrupts
 	rearm_pb_interrupts(priv);
-	kthread_run(seven_seg_task, priv, "seven_seg_task");
+
 	return misc_register(&priv->miscdev);
 }
 
 static int on_remove(struct platform_device *pdev)
 {
 	struct data *priv = platform_get_drvdata(pdev);
-	DBG("Removing\n");
-	kfifo_free(&priv->fifo);
 
+	DBG("Removing\n");
+	// Stop the thread
+	priv->stop_display = true;
+	priv->thread_over = true;
+	complete(&priv->zero_found);
+	complete(&priv->timer_done);
+	DBG("Task pointer: %p\n", priv->task);
+	kthread_stop(priv->task);
+	DBG("Turning off leds\n");
+	//Wait for our thread to finish
+	turn_off_seven_seg(priv->seven_segment_low, priv->seven_segment_high);
+	//Free resources
+	del_timer_sync(&priv->timer);
 	misc_deregister(&priv->miscdev);
 	return 0;
 }
