@@ -1,3 +1,4 @@
+#include "linux/mutex.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -5,29 +6,30 @@
 #include <linux/of.h>
 #include <linux/io.h>
 #include <linux/workqueue.h>
+#include <linux/atomic.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("REDS");
 MODULE_DESCRIPTION("Led controller with multiple pattern");
 
-#define LEDS_OFST 0x0
+#define LEDS_OFST	  0x0
 
-#define KEY_OFST 0x50
-#define KEY_IRQ_EN_OFST (KEY_OFST + 0x8)
+#define KEY_OFST	  0x50
+#define KEY_IRQ_EN_OFST	  (KEY_OFST + 0x8)
 #define KEY_IRQ_EDGE_OFST (KEY_OFST + 0xC)
 
-#define NB_LEDS 10
-#define LEDS_MASK ((1 << NB_LEDS) - 1)
+#define NB_LEDS		  10
+#define LEDS_MASK	  ((1 << NB_LEDS) - 1)
 
-#define DEV_NAME "led_controller"
+#define DEV_NAME	  "led_controller"
 
-#define MOD_NOTHING 0
-#define MOD_INC 1
-#define MOD_DEC 2
-#define MOD_ROT_LEFT 3
-#define MOD_ROT_RIGHT 4
+#define MOD_NOTHING	  0
+#define MOD_INC		  1
+#define MOD_DEC		  2
+#define MOD_ROT_LEFT	  3
+#define MOD_ROT_RIGHT	  4
 
-#define UPDATE_INTERVAL 2500
+#define UPDATE_INTERVAL	  2500
 
 /**
  * struct priv - Private data for the device
@@ -42,8 +44,9 @@ struct priv {
 	struct device *dev;
 
 	uint16_t value;
-	uint8_t mod;
+	atomic_t mod;
 	struct delayed_work work;
+	struct mutex mutex;
 };
 
 /* Prototypes for sysfs callbacks */
@@ -101,7 +104,7 @@ static ssize_t mod_show(struct device *dev, struct device_attribute *attr,
 {
 	struct priv *priv = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", priv->mod);
+	return sysfs_emit(buf, "%d\n", atomic_read(&priv->mod));
 }
 
 /**
@@ -130,7 +133,7 @@ static ssize_t mod_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	priv->mod = new_mod;
+	atomic_set(&priv->mod, new_mod);
 	return count;
 }
 
@@ -146,8 +149,11 @@ static ssize_t value_show(struct device *dev, struct device_attribute *attr,
 			  char *buf)
 {
 	struct priv *priv = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%03x\n", priv->value);
+	uint16_t ret;
+	mutex_lock(&priv->mutex);
+	ret = priv->value;
+	mutex_unlock(&priv->mutex);
+	return sysfs_emit(buf, "%03x\n", ret);
 }
 
 /**
@@ -176,8 +182,11 @@ static ssize_t value_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
+	mutex_lock(&priv->mutex);
 	priv->value = new_val;
-	lc_write(priv, LEDS_OFST, priv->value);
+	mutex_unlock(&priv->mutex);
+
+	lc_write(priv, LEDS_OFST, new_val);
 	return count;
 }
 
@@ -189,9 +198,10 @@ static ssize_t value_store(struct device *dev, struct device_attribute *attr,
 static void work_handler(struct work_struct *work)
 {
 	struct priv *priv = container_of(work, struct priv, work.work);
-
+	uint16_t value;
+	mutex_lock(&priv->mutex);
 	// Execute the correct modification to the value
-	switch (priv->mod) {
+	switch (atomic_read(&priv->mod)) {
 	case MOD_NOTHING:
 		break;
 	case MOD_INC:
@@ -212,7 +222,10 @@ static void work_handler(struct work_struct *work)
 		break;
 	}
 	priv->value = priv->value & LEDS_MASK;
-	lc_write(priv, LEDS_OFST, priv->value);
+	value = priv->value;
+	mutex_unlock(&priv->mutex);
+
+	lc_write(priv, LEDS_OFST, value);
 
 	// Schedule next work iteration
 	schedule_delayed_work(&priv->work, msecs_to_jiffies(UPDATE_INTERVAL));
@@ -241,8 +254,8 @@ static int led_controller_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, priv);
 	priv->dev = &pdev->dev;
 	priv->value = 0;
-	priv->mod = MOD_INC;
-
+	atomic_set(&priv->mod, MOD_INC);
+	mutex_init(&priv->mutex);
 	/******* Setup memory region pointers *******/
 	priv->mem_ptr = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(priv->mem_ptr)) {

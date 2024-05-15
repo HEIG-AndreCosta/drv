@@ -1,5 +1,5 @@
 # !!! Change the path below to the location of your kernel !!!
-KERNELDIR := /home/reds/linux-socfpga/
+KERNELDIR := /home/andre/dev/heig-vd/drv/linux-socfpga/
 TOOLCHAIN := /opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf-
 
 obj-m := led_controller.o
