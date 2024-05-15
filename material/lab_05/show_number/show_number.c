@@ -125,7 +125,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 
 	(void)irq; // unused
 	DBG("Pressed %x", pressed);
-	if (pressed & 0x01) {
+	if (pressed & 0x02) {
 		priv->stop_display = true;
 	}
 	rearm_pb_interrupts(priv);

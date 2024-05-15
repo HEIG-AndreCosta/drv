@@ -129,7 +129,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 
 	(void)irq; // unused
 	DBG("Pressed %x", pressed);
-	if (pressed & 0x01) {
+	if (pressed & 0x02) {
 		priv->stop_display = true;
 	}
 	rearm_pb_interrupts(priv);
@@ -392,6 +392,7 @@ static int on_probe(struct platform_device *pdev)
 	// Set the driver data on the platform bus
 	platform_set_drvdata(pdev, priv);
 
+	DBG("Probe Ok");
 	//Enabling interrupts on the hardware
 	iowrite8(0xF, priv->btn_interrupt_mask);
 	// Arming interrupts
