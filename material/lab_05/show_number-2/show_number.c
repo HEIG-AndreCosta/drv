@@ -272,6 +272,14 @@ static ssize_t fifo_show(struct device *dev, struct device_attribute *attr,
 	kfree(fifo_vals);
 	return output_buf_pos;
 }
+static ssize_t display_time_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	ssize_t rc;
+	struct data *priv = dev_get_drvdata(dev);
+	rc = sysfs_emit(buf, "%zu\n", priv->display_delay);
+	return rc;
+}
 static ssize_t display_time_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
@@ -287,7 +295,7 @@ static ssize_t display_time_store(struct device *dev,
 	return rc;
 }
 static DEVICE_ATTR_RO(display_count);
-static DEVICE_ATTR_WO(display_time);
+static DEVICE_ATTR_RW(display_time);
 static DEVICE_ATTR_RO(fifo_len);
 static DEVICE_ATTR_RO(fifo);
 
