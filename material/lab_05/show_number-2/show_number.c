@@ -1,4 +1,3 @@
-#include "asm/page.h"
 #include "linux/completion.h"
 #include "linux/container_of.h"
 #include "linux/device.h"
@@ -232,7 +231,7 @@ static ssize_t fifo_len_show(struct device *dev, struct device_attribute *attr,
 {
 	ssize_t rc;
 	struct data *priv = dev_get_drvdata(dev);
-	size_t len = kfifo_len(&priv->fifo);
+	size_t len = kfifo_len(&priv->fifo) / sizeof(FIFO_TYPE);
 	rc = sysfs_emit(buf, "%zu\n", len);
 	return rc;
 }
@@ -251,20 +250,27 @@ static ssize_t fifo_show(struct device *dev, struct device_attribute *attr,
 	size_t values_read;
 	struct data *priv = dev_get_drvdata(dev);
 	size_t len = kfifo_len(&priv->fifo);
-	FIFO_TYPE *fifo_vals = kzalloc(sizeof(FIFO_TYPE) * len, GFP_KERNEL);
+	FIFO_TYPE *fifo_vals = kzalloc(len, GFP_KERNEL);
+	size_t output_buf_pos = 0;
 	if (!fifo_vals) {
 		return -ENOMEM;
 	}
 	rc = kfifo_out_peek(&priv->fifo, fifo_vals, len);
-	values_read = rc * sizeof(FIFO_TYPE);
+	values_read = rc / sizeof(FIFO_TYPE);
+	DBG("Values Read: %zu\n", values_read);
 
 	for (int i = 0; i < values_read; ++i) {
-		rc = scnprintf(buf + i * 7, PAGE_SIZE, "%6d\n", fifo_vals[i]);
-		if (rc != 7) {
-			return -EFAULT;
-		}
+		rc = scnprintf(buf + output_buf_pos, 8, "%d%c", fifo_vals[i],
+			       i == values_read - 1 ? '\n' : ';');
+		output_buf_pos += rc;
+		DBG("%d: %d - %zu\n", i, fifo_vals[i], rc);
+		// if (rc != 7) {
+		// 	return -EFAULT;
+		// }
 	}
-	return rc;
+	DBG("Output: %s\n", buf);
+	kfree(fifo_vals);
+	return output_buf_pos;
 }
 static ssize_t display_time_store(struct device *dev,
 				  struct device_attribute *attr,
