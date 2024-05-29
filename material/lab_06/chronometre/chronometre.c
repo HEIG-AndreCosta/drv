@@ -1,4 +1,8 @@
+#include "asm/current.h"
+#include "linux/delay.h"
+#include "linux/irqreturn.h"
 #include "linux/jiffies.h"
+#include "linux/list.h"
 #include "linux/spinlock.h"
 #include "linux/types.h"
 #include <linux/kernel.h>
@@ -15,18 +19,24 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("André Costa");
 MODULE_DESCRIPTION("Chronometre");
 
-#define LEDS_OFST	  0x0
-#define KEY_OFST	  0x50
-#define KEY_IRQ_EN_OFST	  (KEY_OFST + 0x8)
-#define KEY_IRQ_EDGE_OFST (KEY_OFST + 0xC)
-#define SWITCH_OFFSET	  (0x40)
+#define LEDS_OFST	    0x0
+#define KEY_OFST	    0x50
+#define KEY_IRQ_EN_OFST	    (KEY_OFST + 0x8)
+#define KEY_IRQ_EDGE_OFST   (KEY_OFST + 0xC)
+#define SWITCH_OFFSET	    (0x40)
 
-#define NB_LEDS		  10
-#define LEDS_MASK	  ((1 << NB_LEDS) - 1)
-#define NB_SWITCH	  10
-#define SWITCH_MASK	  ((1 << NB_SWITCH) - 1)
+#define KEY0_MASK	    (0x01)
+#define KEY1_MASK	    (0x02)
+#define KEY2_MASK	    (0x04)
+#define KEY3_MASK	    (0x08)
 
-#define DEV_NAME	  "chronometre"
+#define NB_LEDS		    10
+#define LEDS_MASK	    ((1 << NB_LEDS) - 1)
+#define NB_SWITCH	    10
+#define SWITCH_MASK	    ((1 << NB_SWITCH) - 1)
+#define UPDATE_INTERVAL_MS  (10) // 10ms
+#define DISPLAY_LAP_TIME_MS (3000) // 3s
+#define DEV_NAME	    "chronometre"
 
 /**
  * struct priv - Private data for the device
@@ -36,21 +46,21 @@ MODULE_DESCRIPTION("Chronometre");
  * @mod:	Actual mod used to modify the value.
  * @work:	Delayed work used to update the value.
  */
-enum chronometre_state { CHRONO_STOP, CHRONO_RUN };
+enum chronometre_state { CHRONO_RESET, CHRONO_PAUSE, CHRONO_RUN };
 enum chronometre_display_state { CHRONO_DISPLAY_TIME, CHRONO_DISPLAY_LAP };
 enum chronometre_lap_display_type {
 	CHRONO_LAP_DISPLAY_FROM_START,
 	CHRONO_LAP_DISPLAY_SINCE_LAST_LAP,
 	CHRONO_LAP_DISPLAY_LEN
 };
-struct display_time {
+struct chrono_time {
 	uint32_t minutes;
 	uint32_t seconds;
 	uint32_t millis;
 };
 struct lap_time {
 	struct list_head list;
-	uint64_t total_jiffies;
+	uint64_t jiffies;
 };
 struct chronometre {
 	void *mem_ptr;
@@ -59,17 +69,19 @@ struct chronometre {
 	size_t lap_times_size;
 
 	struct delayed_work work;
-	spinlock_t sp;
 	enum chronometre_state state;
 	enum chronometre_display_state display_state;
 	enum chronometre_lap_display_type lap_display_type;
 	uint64_t start_jiffies;
+	uint64_t last_lap_display;
+	uint8_t btn_pressed;
+	spinlock_t btn_spinlock;
 };
 
 #define MS_IN_A_MINUTE (1000 * 60) //1000 second
 #define MS_IN_A_SECOND (1000)
 
-static void get_display_time(struct display_time *out_display_time,
+static void get_display_time(struct chrono_time *out_display_time,
 			     uint64_t start_jiffies, uint64_t end_jiffies)
 {
 	uint32_t t = jiffies_delta_to_msecs(end_jiffies - start_jiffies);
@@ -80,8 +92,8 @@ static void get_display_time(struct display_time *out_display_time,
 	t %= MS_IN_A_SECOND;
 	out_display_time->millis = t;
 }
-static void get_current_display_time(struct chronometre *chrono,
-				     struct display_time *out_display_time)
+static void get_current_chrono_time(struct chronometre *chrono,
+				    struct chrono_time *out_display_time)
 {
 	if (chrono->state != CHRONO_RUN) {
 		out_display_time->minutes = 0;
@@ -145,12 +157,6 @@ static void lc_write(const struct chronometre *const priv, const int reg_offset,
 		  (uint32_t *)priv->mem_ptr + reg_offset / sizeof(uint32_t));
 }
 
-static ssize_t lap_display_type_show(struct device *dev,
-				     struct device_attribute *attr, char *buf);
-
-static ssize_t lap_display_type_store(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count);
 /**
  * is_running_show - Callback to show if the chrono is currently running
  *
@@ -195,8 +201,8 @@ static ssize_t time_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
 {
 	struct chronometre *priv = dev_get_drvdata(dev);
-	struct display_time time;
-	get_current_display_time(priv, &time);
+	struct chrono_time time;
+	get_current_chrono_time(priv, &time);
 
 	return sysfs_emit(buf, "%2d:%2d:%2d\n", time.minutes, time.seconds,
 			  time.millis);
@@ -213,8 +219,8 @@ static ssize_t lap_display_type_show(struct device *dev,
 				     struct device_attribute *attr, char *buf)
 {
 	struct chronometre *priv = dev_get_drvdata(dev);
-	struct display_time time;
-	get_current_display_time(priv, &time);
+	struct chrono_time time;
+	get_current_chrono_time(priv, &time);
 
 	return sysfs_emit(
 		buf,
@@ -224,7 +230,7 @@ static ssize_t lap_display_type_show(struct device *dev,
 }
 
 /**
- * lap_displa_type_store - Callback to change the lap display time.
+ * lap_display_type_store - Callback to change the lap display time.
  * 0 -> Display time since start
  * 1 -> Display time since last lap
  *
@@ -234,8 +240,9 @@ static ssize_t lap_display_type_show(struct device *dev,
  * @count:	Number of bytes to read.
  * Return: The number of bytes read from the buffer.
  */
-static ssize_t mod_store(struct device *dev, struct device_attribute *attr,
-			 const char *buf, size_t count)
+static ssize_t lap_display_type_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
 {
 	struct chronometre *priv = dev_get_drvdata(dev);
 	int rc;
@@ -255,6 +262,11 @@ static ssize_t mod_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+static void display_time_in_7_seg(struct chronometre *chrono,
+				  struct chrono_time *time)
+{
+}
+
 /**
  * work_handler - Work handler to update the leds based on current mod.
  *
@@ -262,63 +274,133 @@ static ssize_t mod_store(struct device *dev, struct device_attribute *attr,
  */
 static void work_handler(struct work_struct *work)
 {
-	struct priv *priv = container_of(work, struct priv, work.work);
-	uint16_t value;
-	unsigned long flags;
-	spin_lock_irqsave(&priv->sp, flags);
-	// Execute the correct modification to the value
-	switch (atomic_read(&priv->mod)) {
-	case MOD_NOTHING:
-		break;
-	case MOD_INC:
-		priv->value++;
-		break;
-	case MOD_DEC:
-		priv->value--;
-		break;
-	case MOD_ROT_LEFT:
-		priv->value = (priv->value << 1) |
-			      (priv->value >> (NB_LEDS - 1));
-		break;
-	case MOD_ROT_RIGHT:
-		priv->value = (priv->value >> 1) |
-			      (priv->value << (NB_LEDS - 1));
-		break;
-	default:
-		break;
+	struct chrono_time chrono_time = { .millis = 0,
+					   .minutes = 0,
+					   .seconds = 0 };
+	struct chronometre *chrono =
+		container_of(work, struct chronometre, work.work);
+
+	uint64_t last_lap_display_jiffies = 0;
+	struct lap_time *current_lap = NULL;
+	struct lap_time *prev_lap = NULL;
+	bool is_head;
+	uint64_t start_jiffies;
+	while (chrono->state == CHRONO_RUN) {
+		switch (chrono->display_state) {
+		case CHRONO_DISPLAY_TIME:
+			get_current_chrono_time(chrono, &chrono_time);
+
+		case CHRONO_DISPLAY_LAP:
+			if (jiffies_64 - last_lap_display_jiffies <
+			    msecs_to_jiffies(DISPLAY_LAP_TIME_MS)) {
+				//no changes
+				continue;
+			}
+			if (current_lap) {
+				current_lap =
+					list_next_entry(current_lap, list);
+
+			} else {
+				if (!chrono->lap_times_size) {
+					chrono->display_state =
+						CHRONO_DISPLAY_TIME;
+					continue;
+				}
+				list_first_entry(&chrono->lap_times,
+						 struct lap_time, list);
+			}
+
+			is_head = list_is_head(&current_lap->list,
+					       &chrono->lap_times);
+			prev_lap = list_prev_entry(current_lap, list);
+			start_jiffies =
+				chrono->lap_display_type ==
+							CHRONO_LAP_DISPLAY_FROM_START ||
+						is_head ?
+					chrono->start_jiffies :
+					prev_lap->jiffies;
+
+			get_display_time(&chrono_time, start_jiffies,
+					 current_lap->jiffies);
+
+			chrono->last_lap_display = jiffies_64;
+		}
+		display_time_in_7_seg(chrono, &chrono_time);
+		msleep(UPDATE_INTERVAL_MS);
 	}
-	priv->value = priv->value & LEDS_MASK;
-	value = priv->value;
-	spin_unlock_irqrestore(&priv->sp, flags);
-
-	lc_write(priv, LEDS_OFST, value);
-
-	// Schedule next work iteration
-	schedule_delayed_work(&priv->work, msecs_to_jiffies(UPDATE_INTERVAL));
 }
 
-static void rearm_pb_interrupts(struct priv *priv)
+static void rearm_pb_interrupts(struct chronometre *chrono)
 {
-	iowrite8(0x0F, priv->mem_ptr + KEY_IRQ_EDGE_OFST);
+	iowrite8(0x0F, chrono->mem_ptr + KEY_IRQ_EDGE_OFST);
 }
 
+static irqreturn_t thread_irq_handler(int irq, void *dev_id)
+{
+	struct chronometre *chrono = (struct chronometre *)dev_id;
+	struct lap_time *lap;
+
+	if (chrono->btn_pressed & KEY0_MASK) {
+		switch (chrono->state) {
+		case CHRONO_RUN:
+			chrono->state = CHRONO_PAUSE;
+		case CHRONO_PAUSE:
+			chrono->state = CHRONO_RUN;
+		case CHRONO_RESET:
+			chrono->state = CHRONO_RUN;
+			chrono->start_jiffies = jiffies_64;
+
+			//TODO init work queue
+		}
+	}
+	if (chrono->btn_pressed & KEY1_MASK) {
+		lap = kzalloc(sizeof(lap), GFP_KERNEL);
+		if (lap) {
+			lap->jiffies = jiffies_64;
+			list_add_tail(&lap->list, &chrono->lap_times);
+			chrono->lap_times_size++;
+		}
+	}
+	if (chrono->btn_pressed & KEY2_MASK) {
+		switch (chrono->display_state) {
+		case CHRONO_DISPLAY_LAP:
+			chrono->display_state = CHRONO_DISPLAY_TIME;
+			break;
+
+		case CHRONO_DISPLAY_TIME:
+			chrono->display_state = CHRONO_DISPLAY_LAP;
+			break;
+		}
+	}
+	if (chrono->btn_pressed & KEY3_MASK) {
+		if (chrono->state == CHRONO_PAUSE) {
+			struct chrono_time chrono_time = { .minutes = 0,
+							   .seconds = 0,
+							   .millis = 0 };
+			struct lap_time *lap;
+
+			chrono->state = CHRONO_RESET;
+			chrono->lap_times_size = 0;
+			chrono->start_jiffies = 0;
+			list_for_each_entry(lap, &chrono->lap_times, list) {
+				list_del(&lap->list);
+				kfree(lap);
+			}
+			display_time_in_7_seg(chrono, &chrono_time);
+		}
+	}
+	return IRQ_HANDLED;
+}
 static irqreturn_t irq_handler(int irq, void *dev_id)
 {
-	struct priv *priv = (struct priv *)dev_id;
+	struct chronometre *chrono = (struct chronometre *)dev_id;
 	unsigned long flags;
-	uint8_t pressed = ioread8(priv->mem_ptr + KEY_IRQ_EDGE_OFST);
+	spin_lock_irqsave(&chrono->btn_spinlock, flags);
+	chrono->btn_pressed = ioread8(chrono->mem_ptr + KEY_IRQ_EDGE_OFST);
+	spin_unlock_irqrestore(&chrono->btn_spinlock, flags);
+	rearm_pb_interrupts(chrono);
 
-	if (pressed & 0x01) {
-		spin_lock_irqsave(&priv->sp, flags);
-		priv->value = ioread16(priv->mem_ptr + SWITCH_OFFSET) &
-			      SWITCH_MASK;
-
-		spin_unlock_irqrestore(&priv->sp, flags);
-		lc_write(priv, LEDS_OFST, priv->value);
-	}
-	rearm_pb_interrupts(priv);
-
-	return IRQ_HANDLED;
+	return IRQ_WAKE_THREAD;
 }
 /**
  * led_controller_probe - Probe function of the platform driver.
@@ -433,4 +515,4 @@ static struct platform_driver led_controller_driver = {
  * platform driver, we can use this helper macros that will automatically
  * create the functions.
  */
-module_platform_driver(led_controller_driver);
+module_platform_drive
