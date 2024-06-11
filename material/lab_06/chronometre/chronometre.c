@@ -1,4 +1,3 @@
-#include "asm/current.h"
 #include "linux/delay.h"
 #include "linux/irqreturn.h"
 #include "linux/jiffies.h"
@@ -14,6 +13,7 @@
 #include <linux/io.h>
 #include <linux/workqueue.h>
 #include <linux/atomic.h>
+#include <linux/math64.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("André Costa");
@@ -29,6 +29,13 @@ MODULE_DESCRIPTION("Chronometre");
 #define KEY1_MASK	    (0x02)
 #define KEY2_MASK	    (0x04)
 #define KEY3_MASK	    (0x08)
+
+#define LED0_MASK	    (0x01)
+#define LED1_MASK	    (0x02)
+#define LED2_MASK	    (0x04)
+
+#define LED_BLINK_DURATION  msecs_to_jiffies(2000)
+#define LED_BLINK_TIME	    msecs_to_jiffies(200)
 
 #define NB_LEDS		    10
 #define LEDS_MASK	    ((1 << NB_LEDS) - 1)
@@ -68,7 +75,8 @@ struct chronometre {
 	struct list_head lap_times;
 	size_t lap_times_size;
 
-	struct delayed_work work;
+	struct work_struct work;
+	struct work_queue_struct work_queue;
 	enum chronometre_state state;
 	enum chronometre_display_state display_state;
 	enum chronometre_lap_display_type lap_display_type;
@@ -267,6 +275,40 @@ static void display_time_in_7_seg(struct chronometre *chrono,
 {
 }
 
+static void update_leds(struct chronometre *chrono)
+{
+	uint8_t mask = 0;
+
+	if (chrono->state == CHRONO_RUN) {
+		mask |= LED0_MASK;
+	}
+	if (chrono->display_state == CHRONO_DISPLAY_LAP) {
+		mask |= LED1_MASK;
+	}
+	if (chrono->lap_times_size > 0) {
+		struct lap_time *last_lap;
+		uint64_t delta_jiffies;
+		uint64_t modulo;
+		last_lap = list_last_entry(&chrono->lap_times, struct lap_time,
+					   list);
+
+		delta_jiffies = jiffies_64 - last_lap->jiffies;
+
+		/* modulo will either be in range [0;LED_BLINK_TIME] 
+		 * or in range [LED_BLINK_TIME; LED_BLINK_TIME *2]
+		 * If we're in the lower range, we can turn on the led
+		 * else we can turn it off.
+		 * This will make the led blink over time
+		 */
+		div64_u64_rem(delta_jiffies, LED_BLINK_TIME * 2, &modulo);
+
+		if (delta_jiffies < LED_BLINK_DURATION &&
+		    modulo < LED_BLINK_TIME) {
+			mask |= LED2_MASK;
+		}
+	}
+	lc_write(chrono, LEDS_OFST, mask);
+}
 /**
  * work_handler - Work handler to update the leds based on current mod.
  *
@@ -278,18 +320,19 @@ static void work_handler(struct work_struct *work)
 					   .minutes = 0,
 					   .seconds = 0 };
 	struct chronometre *chrono =
-		container_of(work, struct chronometre, work.work);
+		container_of(work, struct chronometre, work);
 
 	uint64_t last_lap_display_jiffies = 0;
 	struct lap_time *current_lap = NULL;
 	struct lap_time *prev_lap = NULL;
 	bool is_head;
 	uint64_t start_jiffies;
+
+	dev_info(chrono->dev, "Starting chronometre\n");
 	while (chrono->state == CHRONO_RUN) {
 		switch (chrono->display_state) {
 		case CHRONO_DISPLAY_TIME:
 			get_current_chrono_time(chrono, &chrono_time);
-
 		case CHRONO_DISPLAY_LAP:
 			if (jiffies_64 - last_lap_display_jiffies <
 			    msecs_to_jiffies(DISPLAY_LAP_TIME_MS)) {
@@ -325,6 +368,7 @@ static void work_handler(struct work_struct *work)
 
 			chrono->last_lap_display = jiffies_64;
 		}
+		update_leds(chrono);
 		display_time_in_7_seg(chrono, &chrono_time);
 		msleep(UPDATE_INTERVAL_MS);
 	}
@@ -340,21 +384,28 @@ static irqreturn_t thread_irq_handler(int irq, void *dev_id)
 	struct chronometre *chrono = (struct chronometre *)dev_id;
 	struct lap_time *lap;
 
+	dev_info(chrono->dev, "Pressed: %#x\n", chrono->btn_pressed);
 	if (chrono->btn_pressed & KEY0_MASK) {
 		switch (chrono->state) {
 		case CHRONO_RUN:
+			dev_info(chrono->dev, "Pausing Chrono\n");
 			chrono->state = CHRONO_PAUSE;
+			break;
 		case CHRONO_PAUSE:
+			dev_info(chrono->dev, "Running Chrono\n");
 			chrono->state = CHRONO_RUN;
+			queue_work(&chrono->work_queue, &chrono->work);
+			break;
 		case CHRONO_RESET:
+			dev_info(chrono->dev, "Enabling Chrono\n");
 			chrono->state = CHRONO_RUN;
 			chrono->start_jiffies = jiffies_64;
-
-			//TODO init work queue
+			queue_work(&chrono->work_queue, &chrono->work);
+			break;
 		}
 	}
 	if (chrono->btn_pressed & KEY1_MASK) {
-		lap = kzalloc(sizeof(lap), GFP_KERNEL);
+		lap = kzalloc(sizeof(*lap), GFP_KERNEL);
 		if (lap) {
 			lap->jiffies = jiffies_64;
 			list_add_tail(&lap->list, &chrono->lap_times);
@@ -364,10 +415,12 @@ static irqreturn_t thread_irq_handler(int irq, void *dev_id)
 	if (chrono->btn_pressed & KEY2_MASK) {
 		switch (chrono->display_state) {
 		case CHRONO_DISPLAY_LAP:
+			dev_info(chrono->dev, "Display Time\n");
 			chrono->display_state = CHRONO_DISPLAY_TIME;
 			break;
 
 		case CHRONO_DISPLAY_TIME:
+			dev_info(chrono->dev, "Display Lap Time\n");
 			chrono->display_state = CHRONO_DISPLAY_LAP;
 			break;
 		}
@@ -378,7 +431,7 @@ static irqreturn_t thread_irq_handler(int irq, void *dev_id)
 							   .seconds = 0,
 							   .millis = 0 };
 			struct lap_time *lap;
-
+			dev_info(chrono->dev, "Resetting Chrono\n");
 			chrono->state = CHRONO_RESET;
 			chrono->lap_times_size = 0;
 			chrono->start_jiffies = 0;
@@ -407,9 +460,9 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
  * @pdev:	Pointer to the platform device structure.
  * Return: 0 on success, negative error code on failure.
  */
-static int led_controller_probe(struct platform_device *pdev)
+static int chronometre_probe(struct platform_device *pdev)
 {
-	struct priv *priv;
+	struct chronometre *priv;
 	int rc;
 	int btn_interrupt = platform_get_irq(pdev, 0);
 
@@ -428,9 +481,12 @@ static int led_controller_probe(struct platform_device *pdev)
 	// Set the driver data of the platform device to the private data
 	platform_set_drvdata(pdev, priv);
 	priv->dev = &pdev->dev;
-	priv->value = 0;
-	atomic_set(&priv->mod, MOD_INC);
-	spin_lock_init(&priv->sp);
+	priv->lap_times_size = 0;
+	priv->state = CHRONO_RESET;
+	priv->display_state = CHRONO_DISPLAY_TIME;
+	priv->lap_display_type = CHRONO_LAP_DISPLAY_FROM_START;
+	priv->btn_pressed = 0;
+	INIT_LIST_HEAD(&priv->lap_times);
 	/******* Setup memory region pointers *******/
 	priv->mem_ptr = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(priv->mem_ptr)) {
@@ -439,8 +495,9 @@ static int led_controller_probe(struct platform_device *pdev)
 		goto return_fail;
 	}
 	/******* Setup Interrupt ******/
-	if (devm_request_irq(&pdev->dev, btn_interrupt, irq_handler, 0,
-			     "led_controller_btn", priv) < 0) {
+	if (devm_request_threaded_irq(&pdev->dev, btn_interrupt, irq_handler,
+				      thread_irq_handler, 0,
+				      "chronometre_btn_irq", priv) < 0) {
 		rc = -EBUSY;
 		dev_err(priv->dev, "Error while setting up IRQ\n");
 		goto return_fail;
@@ -451,6 +508,11 @@ static int led_controller_probe(struct platform_device *pdev)
 		dev_err(priv->dev, "Error while creating the sysfs group\n");
 		goto return_fail;
 	}
+	priv->work_queue = create_workqueue("Chrono work queue");
+	if (IS_ERR(priv->work_queue)) {
+		goto return_fail;
+	}
+	INIT_WORK(&priv->work, work_handler);
 
 	/*************** Setup registers ***************/
 	// Turn off the leds
@@ -458,10 +520,8 @@ static int led_controller_probe(struct platform_device *pdev)
 	iowrite8(0xF, priv->mem_ptr + KEY_IRQ_EN_OFST);
 
 	/*************** Setup delayed work ***************/
-	INIT_DELAYED_WORK(&priv->work, work_handler);
-	schedule_delayed_work(&priv->work, msecs_to_jiffies(UPDATE_INTERVAL));
 
-	dev_info(&pdev->dev, "led_controller probe successful!\n");
+	dev_info(&pdev->dev, "Chrono probe successful!\n");
 
 	return 0;
 
@@ -474,18 +534,18 @@ return_fail:
  * @pdev:	Pointer to the platform device structure.
  * Return: 0 on success, negative error code on failure.
  */
-static int led_controller_remove(struct platform_device *pdev)
+static int chronometre_remove(struct platform_device *pdev)
 {
 	// Retrieve the private data from the platform device
-	struct priv *priv = platform_get_drvdata(pdev);
+	struct chronometre *priv = platform_get_drvdata(pdev);
 
 	// Turn off the leds
 	lc_write(priv, LEDS_OFST, 0);
 
 	sysfs_remove_group(&pdev->dev.kobj, &lc_attr_group);
-
-	// Delete the delayed work
-	cancel_delayed_work_sync(&priv->work);
+	priv->state = CHRONO_RESET;
+	// Delete the work
+	cancel_work_sync(&priv->work);
 
 	dev_info(&pdev->dev, "led_controller remove successful!\n");
 
@@ -493,21 +553,21 @@ static int led_controller_remove(struct platform_device *pdev)
 }
 
 /* Instanciate the list of supported devices */
-static const struct of_device_id led_controller_id[] = {
+static const struct of_device_id chronometre_id[] = {
 	{ .compatible = "drv2024" },
 	{ /* END */ },
 };
-MODULE_DEVICE_TABLE(of, led_controller_id);
+MODULE_DEVICE_TABLE(of, chronometre_id);
 
 /* Instanciate the platform driver for this driver */
-static struct platform_driver led_controller_driver = {
+static struct platform_driver chonometre_driver = {
 	.driver = {
 		.name = "led_controller",
 		.owner = THIS_MODULE,
-		.of_match_table = of_match_ptr(led_controller_id),
+		.of_match_table = of_match_ptr(chronometre_id),
 	},
-	.probe = led_controller_probe,
-	.remove = led_controller_remove,
+	.probe = chronometre_probe,
+	.remove = chronometre_remove,
 };
 
 /*
@@ -515,4 +575,4 @@ static struct platform_driver led_controller_driver = {
  * platform driver, we can use this helper macros that will automatically
  * create the functions.
  */
-module_platform_drive
+module_platform_driver(chonometre_driver);
