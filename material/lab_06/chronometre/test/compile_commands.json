@@ -1,0 +1,16 @@
+[
+  {
+    "arguments": [
+      "/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf-gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-o",
+      "/home/andre/export/drv/chrono_test",
+      "chrono_test.c"
+    ],
+    "directory": "/home/andre/dev/heig-vd/drv/drv24/material/lab_06/chronometre/test",
+    "file": "/home/andre/dev/heig-vd/drv/drv24/material/lab_06/chronometre/test/chrono_test.c",
+    "output": "/home/andre/export/drv/chrono_test"
+  }
+]
