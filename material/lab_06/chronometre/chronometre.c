@@ -649,7 +649,13 @@ static ssize_t on_read(struct file *filp, char __user *buf, size_t count,
 	}
 	*ppos = 0;
 
-	buffer[0] = jiffies_to_msecs(jiffies_64 - chrono->start_jiffies);
+	if (chrono->state == CHRONO_RESET) {
+		buffer[0] = 0;
+
+	} else {
+		buffer[0] =
+			jiffies_to_msecs(jiffies_64 - chrono->start_jiffies);
+	}
 	if (chrono->lap_times_size > 0) {
 		lap = list_first_entry(&chrono->lap_times, struct lap_time,
 				       list);
@@ -770,6 +776,8 @@ static int chronometre_remove(struct platform_device *pdev)
 
 	// Turn off the leds
 	lc_write(priv, LEDS_OFST, 0);
+	lc_write(priv, LOWER_SEVEN_SEG_OFST, 0);
+	lc_write(priv, HIGHER_SEVEN_SEG_OFST, 0);
 
 	sysfs_remove_group(&pdev->dev.kobj, &lc_attr_group);
 	priv->state = CHRONO_RESET;

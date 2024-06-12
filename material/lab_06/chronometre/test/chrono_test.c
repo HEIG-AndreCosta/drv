@@ -39,9 +39,10 @@ int main(void)
 
 	msecs_to_time(buf[0], &t);
 
-	printf("Current Time: %d:%d:%d\n", t.minutes, t.secs, t.cents);
+	printf("Current Time: %02d:%02d:%02d\n", t.minutes, t.secs, t.cents);
 	for (size_t i = 1; i < nbs_read; ++i) {
 		msecs_to_time(buf[i], &t);
-		printf("Lap %d: %d:%d:%d\n", i, t.minutes, t.secs, t.cents);
+		printf("Lap %02d: %02d:%02d:%02d\n", i, t.minutes, t.secs,
+		       t.cents);
 	}
 }
